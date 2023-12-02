@@ -8,7 +8,9 @@ edition = "2021"
 [dependencies]
 softbuffer = "0.3.3"
 winit = { version = "0.29.3", features = ["rwh_05"] }
+lazy_static = "1.4.0"
 
 [profile.release]
 opt-level = 3
 panic = "abort"
+debug = true
