@@ -1,9 +1,9 @@
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 
-const TEX_SIZE: usize = 128;
+pub const TEX_SIZE: usize = 128;
 #[derive(Clone, Debug)]
-pub struct Texture(Vec<u8>);
+pub struct Texture(pub Vec<u8>);
 
 lazy_static! {
     pub static ref TEXTURES: HashMap<&'static str, Texture> = {

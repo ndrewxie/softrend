@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::time::Instant;
@@ -6,7 +8,6 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, WindowBuilder};
 
-mod assets;
 mod softrend;
 
 fn main() {

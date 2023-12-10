@@ -1,14 +1,10 @@
-mod simd_vec;
-use super::assets;
-use simd_vec::*;
+mod assets;
 
-const N_DRAW_INTERPS: usize = 4;
-const N_FILL_INTERPS: usize = 4;
+use std::any::TypeId;
+use std::simd::prelude::*;
+use std::simd::*;
 
-// SIMD stride for f32
-const F32_STRIDE: usize = 4;
-
-const TILE_SIZES: [usize; 3] = [8, 32, 128];
+const TILE_SIZES: [usize; 3] = [16, 32, 128];
 const OUTER_TILE_SIZE: usize = TILE_SIZES[TILE_SIZES.len() - 1];
 const OUTER_TILE_INDEX: usize = TILE_SIZES.len() - 1;
 const N_TILE_SIZES: usize = TILE_SIZES.len() + 1; // 1x1 tiles
@@ -26,13 +22,13 @@ pub struct Renderer {
 
 #[derive(Clone, Debug)]
 struct StepInfo {
-    dx_draw: SimdVec<f32, N_DRAW_INTERPS>,
-    dy_draw: SimdVec<f32, N_DRAW_INTERPS>,
-    offset_accept: SimdVec<f32, N_DRAW_INTERPS>,
-    offset_reject: SimdVec<f32, N_DRAW_INTERPS>,
+    dx_draw: f32x4,
+    dy_draw: f32x4,
+    offset_accept: f32x4,
+    offset_reject: f32x4,
 
-    dx_fill: SimdVec<f32, N_FILL_INTERPS>,
-    dy_fill: SimdVec<f32, N_FILL_INTERPS>,
+    dx_fill: f32x4,
+    dy_fill: f32x4,
 }
 
 impl Renderer {
@@ -63,17 +59,17 @@ impl Renderer {
     }
     pub fn draw(&mut self, time: usize) -> &[u8] {
         self.pixels.fill(0);
-        for _ in 0..100 {
+        for _ in 0..10 {
             self.draw_tri(
                 [0.0, 0.0, 0.0, 0.0, 0.0],
-                [1920.0 - 1.0, 0.0, 1.0, 0.0, 0.0],
-                [1920.0 - 1.0, 1080.0 - 1.0, 1.0, 1.0, 0.0],
+                [1920.0 - 1.0, 0.0, 0.0, 128.0, 0.0],
+                [1920.0 - 1.0, 1080.0 - 1.0, 128.0, 128.0, 0.0],
                 assets::TEXTURES.get("joemama").unwrap(),
             );
             self.draw_tri(
                 [1920.0 - 1.0, 1080.0 - 1.0, 0.0, 0.0, 0.0],
-                [0.0, 1080.0 - 1.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 1.0, 0.0],
+                [0.0, 1080.0 - 1.0, 0.0, 128.0, 0.0],
+                [0.0, 0.0, 128.0, 128.0, 0.0],
                 assets::TEXTURES.get("joemama").unwrap(),
             );
         }
@@ -115,15 +111,15 @@ impl Renderer {
         tl: (usize, usize),
         br: (usize, usize),
         tsi: usize,
-        mut draw_interps: SimdVec<f32, N_DRAW_INTERPS>,
-        mut fill_interps: SimdVec<f32, N_FILL_INTERPS>,
+        mut draw_interps: f32x4,
+        mut fill_interps: f32x4,
         step_info: &[StepInfo; N_TILE_SIZES],
         texture: &assets::Texture,
     ) {
         let step: &StepInfo = &step_info[tsi];
         let ts = TILE_SIZES[tsi];
         for y in (tl.1..br.1).step_by(ts) {
-            let mut r_draw_interps: SimdVec<f32, 4> = draw_interps.clone();
+            let mut r_draw_interps: f32x4 = draw_interps.clone();
             let mut r_fill_interps = fill_interps.clone();
             for x in (tl.0..br.0).step_by(ts) {
                 if step.rejects(r_draw_interps) {
@@ -131,32 +127,119 @@ impl Renderer {
                     r_fill_interps += step.dx_fill;
                     continue;
                 }
-                if step.accepts(r_draw_interps) {
-                    let color = [[255_u8, 255, 0, 0], [0, 0, 255, 0], [255, 0, 255, 0]][tsi];
-                    self.debug_fill((x, y), (x + ts, y + ts), color);
-                    r_draw_interps += step.dx_draw;
-                    r_fill_interps += step.dx_fill;
-                    continue;
-                }
-                if tsi > 0 {
-                    self.step_tile(
-                        (x, y),
-                        (x + ts, y + ts),
-                        tsi - 1,
-                        r_draw_interps,
-                        r_fill_interps,
-                        step_info,
-                        texture,
-                    );
-                }
-                else {
-                    self.debug_fill((x, y), (x + ts, y + ts), [100, 100, 100, 0]);
+                let accepts = step.accepts(r_draw_interps);
+                match (tsi, accepts) {
+                    (0, true) => {
+                        self.fill_inner_tile::<true>(
+                            (x, y),
+                            r_draw_interps,
+                            r_fill_interps,
+                            step_info,
+                            texture,
+                        );
+                    }
+                    (0, false) => {
+                        self.fill_inner_tile::<false>(
+                            (x, y),
+                            r_draw_interps,
+                            r_fill_interps,
+                            step_info,
+                            texture,
+                        );
+                    }
+                    _ => {
+                        self.step_tile(
+                            (x, y),
+                            (x + ts, y + ts),
+                            tsi - 1,
+                            r_draw_interps,
+                            r_fill_interps,
+                            step_info,
+                            texture,
+                        );
+                    }
                 }
                 r_draw_interps += step.dx_draw;
                 r_fill_interps += step.dx_fill;
             }
             draw_interps += step.dy_draw;
             fill_interps += step.dy_fill;
+        }
+    }
+    // Vector version
+    #[inline(never)]
+    fn fill_inner_tile<const ACCEPTED: bool>(
+        &mut self,
+        tl: (usize, usize),
+        mut draw_interps: f32x4,
+        fill_interps: f32x4,
+        step_info: &[StepInfo; N_TILE_SIZES],
+        texture: &assets::Texture,
+    ) {
+        let step = &step_info[step_info.len() - 1];
+        let mut tx = f32x4::from_array([0.0, 1.0, 2.0, 3.0])
+            * f32x4::splat(step.dx_fill[0])
+            + f32x4::splat(fill_interps[0]);
+        let mut ty = f32x4::from_array([0.0, 1.0, 2.0, 3.0])
+            * f32x4::splat(step.dx_fill[1])
+            + f32x4::splat(fill_interps[1]);
+
+        let dtx_dx = step.dx_fill[0] * 4.0;
+        let dty_dx = step.dx_fill[1] * 4.0;
+        let dtx_dy = step.dy_fill[0] - step.dx_fill[0] * TILE_SIZES[0] as f32;
+        let dty_dy = step.dy_fill[1] - step.dx_fill[1] * TILE_SIZES[0] as f32;
+
+        let mut indx = 4 * (self.width * tl.1 + tl.0);
+        for _ in 0..TILE_SIZES[0] {
+            let mut row_indx = indx;
+            let mut row_draw_interps =
+                if ACCEPTED { f32x4::splat(0.0) } else { draw_interps.clone() };
+            for _ in 0..(TILE_SIZES[0] / 4) {
+                let line_framebuffer = unsafe {
+                    self.pixels.get_unchecked_mut(row_indx..row_indx + 16)
+                };
+
+                let int_tx = unsafe {
+                    tx.simd_clamp(
+                        f32x4::splat(0.0),
+                        f32x4::splat((assets::TEX_SIZE - 1) as f32),
+                    )
+                    .to_int_unchecked::<i32>()
+                };
+                let int_ty = unsafe {
+                    ty.simd_clamp(
+                        f32x4::splat(0.0),
+                        f32x4::splat((assets::TEX_SIZE - 1) as f32),
+                    )
+                    .to_int_unchecked::<i32>()
+                };
+                let texcoords = i32x4::splat(4) * int_tx
+                    + i32x4::splat(assets::TEX_SIZE as i32 * 4) * int_ty;
+
+                for (tex_indx, pix) in texcoords
+                    .as_array()
+                    .iter()
+                    .zip(line_framebuffer.chunks_exact_mut(4))
+                {
+                    if ACCEPTED || row_draw_interps.simd_ge(f32x4::splat(0.0)).all() {
+                        let ti = *tex_indx as usize;
+                        let tex: &[u8] = unsafe { texture.0.get_unchecked(ti..ti + 4) };
+                        pix.copy_from_slice(tex);
+                    }
+                    if !ACCEPTED {
+                        row_draw_interps += step.dx_draw;
+                    }
+                }
+                tx += f32x4::splat(dtx_dx);
+                ty += f32x4::splat(dty_dx);
+                row_indx += 16;
+            }
+            tx += f32x4::splat(dtx_dy);
+            ty += f32x4::splat(dty_dy);
+            if !ACCEPTED {
+                draw_interps += step.dy_draw;
+            }
+            indx += 4 * self.width;
         }
     }
     /// Takes the x and y coordinates for the 3 points of a triangle, and outputs the coordinates
@@ -181,32 +264,18 @@ impl Renderer {
             max_y.next_multiple_of(align_to),
         ]
     }
-    #[inline(never)]
-    fn debug_fill(&mut self, tl: (usize, usize), br: (usize, usize), color: [u8; 4]) {
-        let mut indx = 4 * (self.width * tl.1 + tl.0);
-        for _ in tl.1..br.1 {
-            let mut row_indx = indx;
-            for _ in tl.0..br.0 {
-                unsafe {
-                    self.pixels.get_unchecked_mut(row_indx..(row_indx+4)).iter_mut().zip(&color).for_each(|(x, b)| *x = *b);
-                }
-                row_indx += 4;
-            }
-            indx += self.width * 4;
-        }
-    }
 }
 
 impl StepInfo {
     pub fn new() -> Self {
         Self {
-            dx_draw: SimdVec([0.0; N_DRAW_INTERPS]),
-            dy_draw: SimdVec([0.0; N_DRAW_INTERPS]),
-            offset_accept: SimdVec([0.0; N_DRAW_INTERPS]),
-            offset_reject: SimdVec([0.0; N_DRAW_INTERPS]),
+            dx_draw: f32x4::splat(0.0),
+            dy_draw: f32x4::splat(0.0),
+            offset_accept: f32x4::splat(0.0),
+            offset_reject: f32x4::splat(0.0),
 
-            dx_fill: SimdVec([0.0; N_FILL_INTERPS]),
-            dy_fill: SimdVec([0.0; N_FILL_INTERPS]),
+            dx_fill: f32x4::splat(0.0),
+            dy_fill: f32x4::splat(0.0),
         }
     }
     /// Computes the initial interpolants for the top-left corner (given by tl) of the AABB, as well
@@ -217,22 +286,19 @@ impl StepInfo {
         p_b: &[f32; 5],
         p_c: &[f32; 5],
         tl: (f32, f32),
-    ) -> (
-        SimdVec<f32, N_DRAW_INTERPS>,
-        SimdVec<f32, N_FILL_INTERPS>,
-        [StepInfo; N_TILE_SIZES],
-    ) {
+    ) -> (f32x4, f32x4, [StepInfo; N_TILE_SIZES]) {
         let recip_tri_area = 1.0
             / Self::area_neg_y(
-                (p_b[0] - p_a[0], p_b[1] - p_a[1]),
-                (p_c[0] - p_a[0], p_c[1] - p_a[1]),
+                (p_a[0] - p_b[0], p_a[1] - p_b[1]),
+                (p_c[0] - p_b[0], p_c[1] - p_b[1]),
             );
 
         let mut step_info = Self::new();
-        let mut draw_interps = [0.0_f32; N_DRAW_INTERPS];
-        let mut fill_interps = [0.0_f32; N_FILL_INTERPS];
+        let mut draw_interps = f32x4::splat(0.0);
+        let mut fill_interps = f32x4::splat(0.0);
 
-        let edges = [(p_a, p_b, p_c), (p_b, p_c, p_a), (p_c, p_a, p_b)];
+        let edges: [(&[f32; 5], &[f32; 5], &[f32; 5]); 3] =
+            [(p_a, p_b, p_c), (p_b, p_c, p_a), (p_c, p_a, p_b)];
         // Loop over all edges of the triangle in CW order
         for (indx, edge_points) in edges.iter().enumerate() {
             // An edge from a to b, with p_excluded being the 3rd point not involved in the edge
@@ -260,7 +326,7 @@ impl StepInfo {
             step_info.offset_reject[indx] = -max_f32(&e_offsets);
 
             for (interp_indx, vertex_interp) in p_3.iter().skip(2).enumerate() {
-                let prod = recip_tri_area * vertex_interp;
+                let prod: f32 = recip_tri_area * vertex_interp;
                 fill_interps[interp_indx] += e_tl * prod;
                 step_info.dx_fill[interp_indx] += e_dx * prod;
                 step_info.dy_fill[interp_indx] += e_dy * prod;
@@ -274,11 +340,12 @@ impl StepInfo {
             TILE_SIZES.iter().map(|&x| step_info.resize_tile(x as f32)).collect();
         step_infos.push(step_info);
 
-        let step_infos = step_infos.try_into().expect("Error");
-        (SimdVec(draw_interps), SimdVec(fill_interps), step_infos)
+        let step_infos: [StepInfo; 4] = step_infos.try_into().expect("Error");
+        (draw_interps, fill_interps, step_infos)
     }
     pub fn resize_tile(&self, tile_size: f32) -> Self {
         let mut acc = self.clone();
+        let tile_size = f32x4::splat(tile_size);
         acc.dx_draw *= tile_size;
         acc.dy_draw *= tile_size;
         acc.offset_accept *= tile_size;
@@ -287,11 +354,11 @@ impl StepInfo {
         acc.dy_fill *= tile_size;
         acc
     }
-    pub fn rejects(&self, draw_interps: SimdVec<f32, N_DRAW_INTERPS>) -> bool {
-        draw_interps.iter().zip(self.offset_reject.iter()).any(|(x, d)| x <= d)
+    pub fn rejects(&self, draw_interps: f32x4) -> bool {
+        draw_interps.simd_le(self.offset_reject).any()
     }
-    pub fn accepts(&self, draw_interps: SimdVec<f32, N_DRAW_INTERPS>) -> bool {
-        draw_interps.iter().zip(self.offset_accept.iter()).all(|(x, d)| x >= d)
+    pub fn accepts(&self, draw_interps: f32x4) -> bool {
+        draw_interps.simd_ge(self.offset_accept).all()
     }
     /// Computes the area of the triangle defined by the vectors `vec_a`, `vec_b` in 2D
     /// Negates the `y` coordinate because gfx coords
