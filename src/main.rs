@@ -30,11 +30,10 @@ fn main() {
     };
     surface.resize(width, height).unwrap();
 
+    let game_start = Instant::now();
     let mut renderer =
         softrend::Renderer::new(size.width as usize, size.height as usize);
-    let renderer_width = renderer.width;
 
-    let app_start = Instant::now();
     let mut last_frame = Instant::now();
     event_loop
         .run(move |event, elwt| {
@@ -43,37 +42,61 @@ fn main() {
                 match event {
                     WindowEvent::CloseRequested => elwt.exit(),
                     WindowEvent::RedrawRequested => {
-                        let now = Instant::now();
-                        let fps = 1000 / ((now - last_frame).as_millis() + 1);
+                        let fps = 1000 / (last_frame.elapsed().as_millis() + 1);
                         println!("fps: {}", fps);
-                        last_frame = now;
+                        last_frame = Instant::now();
 
-                        let pixels =
-                            renderer.draw((now - app_start).as_millis() as usize);
-                        let mut buffer = surface.buffer_mut().unwrap();
-                        for (in_row, out_row) in pixels
-                            .chunks_exact(4 * renderer_width)
-                            .zip(buffer.chunks_exact_mut(width.get() as usize))
-                        {
-                            for (in_pix, out_pix) in
-                                in_row.chunks_exact(4).zip(out_row.iter_mut())
-                            {
-                                let red = in_pix[0] as u32;
-                                let green = in_pix[1] as u32;
-                                let blue = in_pix[2] as u32;
-                                *out_pix = blue | (green << 8) | (red << 16);
-                            }
-                        }
+                        let mut buffer: softbuffer::Buffer<'_> =
+                            surface.buffer_mut().unwrap();
+                        renderer
+                            .draw_frame(game_start.elapsed().as_millis())
+                            .copy_to_brga_u32(&mut buffer);
+
                         buffer.present().unwrap();
                         window.request_redraw();
                     }
                     WindowEvent::KeyboardInput { event, .. } => {
                         if event.state == ElementState::Pressed && !event.repeat {
                             println!("Pressed {:?}", event.physical_key);
-                            if event.physical_key
-                                == PhysicalKey::Code(KeyCode::Escape)
-                            {
-                                elwt.exit();
+                            match event.physical_key {
+                                PhysicalKey::Code(KeyCode::Escape) => {
+                                    elwt.exit();
+                                }
+                                PhysicalKey::Code(KeyCode::KeyW) => {
+                                    renderer.move_cam(0.0, 0.0, 1.0);
+                                }
+                                PhysicalKey::Code(KeyCode::KeyA) => {
+                                    renderer.move_cam(-1.0, 0.0, 0.0);
+                                }
+                                PhysicalKey::Code(KeyCode::KeyD) => {
+                                    renderer.move_cam(1.0, 0.0, 0.0);
+                                }
+                                PhysicalKey::Code(KeyCode::KeyS) => {
+                                    renderer.move_cam(0.0, 0.0, -1.0);
+                                }
+                                PhysicalKey::Code(KeyCode::KeyQ) => {
+                                    renderer.move_cam(0.0, 1.0, 0.0);
+                                }
+                                PhysicalKey::Code(KeyCode::KeyE) => {
+                                    renderer.move_cam(0.0, -1.0, 0.0);
+                                }
+                                PhysicalKey::Code(KeyCode::ArrowRight) => {
+                                    renderer
+                                        .rot_cam(-std::f32::consts::PI * 0.05, 0.0);
+                                }
+                                PhysicalKey::Code(KeyCode::ArrowLeft) => {
+                                    renderer
+                                        .rot_cam(std::f32::consts::PI * 0.05, 0.0);
+                                }
+                                PhysicalKey::Code(KeyCode::ArrowUp) => {
+                                    renderer
+                                        .rot_cam(0.0, std::f32::consts::PI * 0.05);
+                                }
+                                PhysicalKey::Code(KeyCode::ArrowDown) => {
+                                    renderer
+                                        .rot_cam(0.0, -std::f32::consts::PI * 0.05);
+                                }
+                                _ => (),
                             }
                         }
                     }
