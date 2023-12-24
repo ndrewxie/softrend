@@ -43,12 +43,14 @@ impl M4xn {
     pub fn w_divide(&mut self) {
         for point in self.0.iter_mut() {
             let w = point[3];
-            point.iter_mut().for_each(|x| *x /= w);
+            point[0] /= w;
+            point[1] /= w;
+            point[3] /= w;
         }
     }
 }
 
-pub mod RenderMats {
+pub mod render_mats {
     use super::*;
 
     #[rustfmt::skip]
@@ -105,7 +107,7 @@ pub mod RenderMats {
             inv_hnw, 0.0,     0.0,              0.0,
             0.0,     inv_hnw, 0.0,              0.0,
             0.0,     0.0,     inv_hnw,          0.0,
-            0.0,     0.0,     near.recip(),     1.0
+            0.0,     0.0,     near.recip(),     0.0
         ])
     }
     #[rustfmt::skip]

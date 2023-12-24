@@ -1,8 +1,18 @@
+// TODO: Optimize rasterizer
+// Idea: Inner tile is now 4x4 (very easy to make tight SIMD loop)
+// Outer tiles go 16x16, 64x64, 128x128. If any outer tile is trivially accepted,
+// iterate over inner tiles and fill them trivially accepted
+// If we descend to inner tile without trivially accepting, then test each inner
+// tile for trivial accept and fill accordingly
+// Obviously, 4x4s are only affinely texture mapped
+
+// TODO: Simplify rasterizer!
+
 use super::assets;
 
 use std::simd::prelude::*;
 
-const TILE_SIZES: [usize; 3] = [4, 32, 128];
+const TILE_SIZES: [usize; 3] = [8, 32, 128];
 const N_TILE_SIZES: usize = TILE_SIZES.len() + 1; // 1x1 tiles
 
 #[repr(C, align(128))]
@@ -88,8 +98,8 @@ impl Rasterizer {
         let mut min_y = (min_f32(&ys) as usize).clamp(0, self.real_dims.1 - 1);
         let max_x = (max_f32(&xs).ceil() as usize).clamp(0, self.real_dims.0 - 1);
         let max_y = (max_f32(&ys).ceil() as usize).clamp(0, self.real_dims.1 - 1);
-        min_x = (min_x / TILE_SIZES[0]) * TILE_SIZES[0];
-        min_y = (min_y / TILE_SIZES[0]) * TILE_SIZES[0];
+        min_x = (min_x / 4) * 4;
+        min_y = (min_y / 4) * 4;
 
         let outer_tile_indx = TILE_SIZES
             .iter()
@@ -187,55 +197,71 @@ impl Rasterizer {
         texture: &assets::Texture,
     ) {
         let step = &step_info[step_info.len() - 1];
-        let offsets = f32x4::from_array([0.0, 1.0, 2.0, 3.0]);
-        let mut rcp_z =
-            offsets * f32x4::splat(step.dx_draw[3]) + f32x4::splat(draw_interps[3]);
-        let mut tx =
-            offsets * f32x4::splat(step.dx_fill[0]) + f32x4::splat(fill_interps[0]);
-        let mut ty =
-            offsets * f32x4::splat(step.dx_fill[1]) + f32x4::splat(fill_interps[1]);
-        let drcpz_dy = step.dy_draw[3];
-        let dtx_dy = step.dy_fill[0];
-        let dty_dy = step.dy_fill[1];
+        let mut tx = f32x4::from_array([0.0, 1.0, 2.0, 3.0])
+            * f32x4::splat(step.dx_fill[0])
+            + f32x4::splat(fill_interps[0]);
+        let mut ty = f32x4::from_array([0.0, 1.0, 2.0, 3.0])
+            * f32x4::splat(step.dx_fill[1])
+            + f32x4::splat(fill_interps[1]);
 
-        let mut index = 4 * (tl.1 * self.width + tl.0);
-        for _ in 0..4 {
+        let dtx_dx = step.dx_fill[0] * 4.0;
+        let dty_dx = step.dx_fill[1] * 4.0;
+        let dtx_dy = step.dy_fill[0] - step.dx_fill[0] * TILE_SIZES[0] as f32;
+        let dty_dy = step.dy_fill[1] - step.dx_fill[1] * TILE_SIZES[0] as f32;
+
+        let mut indx = 4 * (self.width * tl.1 + tl.0);
+        for _ in 0..TILE_SIZES[0] {
+            let mut row_indx = indx;
             let mut row_draw_interps =
                 if ACCEPTED { f32x4::splat(0.0) } else { draw_interps };
+            for _ in 0..(TILE_SIZES[0] / 4) {
+                let line_framebuffer = unsafe {
+                    self.pixels.get_unchecked_mut(row_indx..row_indx + 16)
+                };
 
-            let z = rcp_z.recip();
-            let tex_min = f32x4::splat(0.0);
-            let tex_max = f32x4::splat((assets::TEX_SIZE - 1) as f32);
-            let persp_tx = (tx * z).simd_clamp(tex_min, tex_max);
-            let persp_ty = (ty * z).simd_clamp(tex_min, tex_max);
+                let int_tx = unsafe {
+                    tx.simd_clamp(
+                        f32x4::splat(0.0),
+                        f32x4::splat((assets::TEX_SIZE - 1) as f32),
+                    )
+                    .to_int_unchecked::<i32>()
+                };
+                let int_ty = unsafe {
+                    ty.simd_clamp(
+                        f32x4::splat(0.0),
+                        f32x4::splat((assets::TEX_SIZE - 1) as f32),
+                    )
+                    .to_int_unchecked::<i32>()
+                };
+                let texcoords = i32x4::splat(4) * int_tx
+                    + i32x4::splat(assets::TEX_SIZE as i32 * 4) * int_ty;
 
-            let int_tx = unsafe { persp_tx.to_int_unchecked::<u32>() };
-            let int_ty = unsafe { persp_ty.to_int_unchecked::<u32>() };
-            let texcoords = u32x4::splat(4) * int_tx
-                + u32x4::splat(assets::TEX_SIZE as u32 * 4) * int_ty;
-
-            let pix_row =
-                unsafe { self.pixels.get_unchecked_mut(index..index + 16) };
-            for (tex_coord, pix) in
-                texcoords.as_array().iter().zip(pix_row.chunks_exact_mut(4))
-            {
-                if ACCEPTED || row_draw_interps.simd_ge(f32x4::splat(0.0)).all() {
-                    let ti = *tex_coord as usize;
-                    let tex = unsafe { texture.0.get_unchecked(ti..ti + 4) };
-                    pix.copy_from_slice(tex);
+                for (tex_indx, pix) in texcoords
+                    .as_array()
+                    .iter()
+                    .zip(line_framebuffer.chunks_exact_mut(4))
+                {
+                    if ACCEPTED || row_draw_interps.simd_ge(f32x4::splat(0.0)).all()
+                    {
+                        let ti = *tex_indx as usize;
+                        let tex: &[u8] =
+                            unsafe { texture.0.get_unchecked(ti..ti + 4) };
+                        pix.copy_from_slice(tex);
+                    }
+                    if !ACCEPTED {
+                        row_draw_interps += step.dx_draw;
+                    }
                 }
-                if !ACCEPTED {
-                    row_draw_interps += step.dx_draw;
-                }
+                tx += f32x4::splat(dtx_dx);
+                ty += f32x4::splat(dty_dx);
+                row_indx += 16;
             }
-
-            rcp_z += f32x4::splat(drcpz_dy);
             tx += f32x4::splat(dtx_dy);
             ty += f32x4::splat(dty_dy);
-            index += 4 * self.width;
             if !ACCEPTED {
                 draw_interps += step.dy_draw;
             }
+            indx += 4 * self.width;
         }
     }
 }
@@ -295,7 +321,6 @@ impl StepInfo {
                 (b[0] - a[0], b[1] - a[1]),
             ) - e_tl;
 
-            // Edge function offsets for the 4 corners of a tile (scaled down to 1x1)
             let e_offsets = [0.0, e_dx, e_dy, e_dx + e_dy];
             draw_interps[indx] = e_tl;
             step_info.dx_draw[indx] = e_dx;
@@ -303,21 +328,16 @@ impl StepInfo {
             step_info.offset_accept[indx] = -min_f32(&e_offsets);
             step_info.offset_reject[indx] = -max_f32(&e_offsets);
 
-            let recip_z = p_3[2].recip();
-            let z_prod = recip_tri_area * recip_z;
-            draw_interps[3] += e_tl * z_prod;
-            step_info.dx_draw[3] += e_dx * z_prod;
-            step_info.dy_draw[3] += e_dy * z_prod;
             for (interp_indx, vertex_interp) in p_3.iter().skip(3).enumerate() {
-                let prod = recip_tri_area * vertex_interp * recip_z;
+                let prod: f32 = recip_tri_area * vertex_interp;
                 fill_interps[interp_indx] += e_tl * prod;
                 step_info.dx_fill[interp_indx] += e_dx * prod;
                 step_info.dy_fill[interp_indx] += e_dy * prod;
             }
         }
 
-        // Don't let z coordinate affect trivial reject
-        step_info.offset_reject[3] = std::f32::NEG_INFINITY;
+        // Don't let free 4th draw interp affect trivial reject
+        step_info.offset_reject[3] = -1.0;
 
         // Step by half a pixel
         draw_interps += (step_info.dx_draw + step_info.dy_draw) * f32x4::splat(0.5);
@@ -327,7 +347,7 @@ impl StepInfo {
             TILE_SIZES.iter().map(|&x| step_info.resize_tile(x as f32)).collect();
         step_infos.push(step_info);
 
-        let step_infos = step_infos.try_into().expect("Error");
+        let step_infos: [StepInfo; 4] = step_infos.try_into().expect("Error");
         Some((draw_interps, fill_interps, step_infos))
     }
     pub fn resize_tile(&self, tile_size: f32) -> Self {

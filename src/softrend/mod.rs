@@ -71,16 +71,16 @@ impl Renderer {
             }
             */
             self.raster.draw_tri(
-                [0.0, 0.0, 0.0, 0.0, 0.0],
-                [1920.0 - 1.0, 0.0, 0.0, 0.0, 127.0],
-                [1920.0 - 1.0, 1080.0 - 1.0, 0.0, 127.0, 127.0],
-                assets::TEXTURES.get("joemama").unwrap(),
+                [0.0, 0.0, 10.0, 0.0, 0.0],
+                [1920.0 - 1.0, 0.0, 10.0, 127.0, 0.0],
+                [1920.0 - 1.0, 1080.0 - 1.0, 10.0, 127.0, 127.0],
+                assets::TEXTURES.get("checkerboard").unwrap(),
             );
             self.raster.draw_tri(
-                [1920.0 - 1.0, 1080.0 - 1.0, 0.0, 0.0, 0.0],
-                [0.0, 1080.0 - 1.0, 0.0, 0.0, 127.0],
-                [0.0, 0.0, 0.0, 127.0, 127.0],
-                assets::TEXTURES.get("joemama").unwrap(),
+                [1920.0 - 1.0, 1080.0 - 1.0, 10.0, 127.0, 127.0],
+                [0.0, 1080.0 - 1.0, 10.0, 0.0, 127.0],
+                [0.0, 0.0, 10.0, 0.0, 0.0],
+                assets::TEXTURES.get("checkerboard").unwrap(),
             );
         }
         */
@@ -90,13 +90,16 @@ impl Renderer {
         let max_dim =
             0.5 * std::cmp::max(self.window_dims.0, self.window_dims.1) as f32;
 
-        let trans =
-            RenderMats::translate(-self.cam_loc.0, -self.cam_loc.1, -self.cam_loc.2);
-        let azu_rot = RenderMats::rot_y(self.cam_orient.0);
-        let alt_rot = RenderMats::rot_x(self.cam_orient.1);
-        let proj = RenderMats::proj(NEAR, FAR, FOV);
-        let screen_scale = RenderMats::scale(max_dim, -max_dim, 1.0);
-        let screen_center = RenderMats::translate(
+        let trans = render_mats::translate(
+            -self.cam_loc.0,
+            -self.cam_loc.1,
+            -self.cam_loc.2,
+        );
+        let azu_rot = render_mats::rot_y(self.cam_orient.0);
+        let alt_rot = render_mats::rot_x(self.cam_orient.1);
+        let proj = render_mats::proj(NEAR, FAR, FOV);
+        let screen_scale = render_mats::scale(max_dim, -max_dim, 1.0);
+        let screen_center = render_mats::translate(
             0.5 * self.window_dims.0 as f32,
             0.5 * self.window_dims.1 as f32,
             0.0,
@@ -106,11 +109,11 @@ impl Renderer {
             screen_center * screen_scale * proj * alt_rot * azu_rot * trans;
     }
     pub fn draw_cube(&mut self, center: [f32; 3], orientation: [f32; 3], size: f32) {
-        let rot = RenderMats::translate(center[0], center[1], center[2])
-            * RenderMats::rot_x(orientation[0])
-            * RenderMats::rot_y(orientation[1])
-            * RenderMats::rot_z(orientation[2])
-            * RenderMats::translate(-center[0], -center[1], -center[2]);
+        let rot = render_mats::translate(center[0], center[1], center[2])
+            * render_mats::rot_x(orientation[0])
+            * render_mats::rot_y(orientation[1])
+            * render_mats::rot_z(orientation[2])
+            * render_mats::translate(-center[0], -center[1], -center[2]);
         let mut vertices = M4xn::from_vec(vec![
             [center[0] + size, center[1] + size, center[2] + size, 1.0], // 0
             [center[0] + size, center[1] + size, center[2] - size, 1.0], // 1
