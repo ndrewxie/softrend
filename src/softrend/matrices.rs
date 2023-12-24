@@ -43,9 +43,7 @@ impl M4xn {
     pub fn w_divide(&mut self) {
         for point in self.0.iter_mut() {
             let w = point[3];
-            point[0] /= w;
-            point[1] /= w;
-            point[3] /= w;
+            point.iter_mut().for_each(|x| *x /= w);
         }
     }
 }
@@ -106,7 +104,7 @@ pub mod render_mats {
         M4x4::from_slice([
             inv_hnw, 0.0,     0.0,              0.0,
             0.0,     inv_hnw, 0.0,              0.0,
-            0.0,     0.0,     inv_hnw,          0.0,
+            0.0,     0.0,     0.0,              1.0,
             0.0,     0.0,     near.recip(),     0.0
         ])
     }

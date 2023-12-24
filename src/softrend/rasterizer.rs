@@ -303,7 +303,7 @@ impl StepInfo {
             step_info.offset_accept[indx] = -min_f32(&e_offsets);
             step_info.offset_reject[indx] = -max_f32(&e_offsets);
 
-            let recip_z = p_3[2].recip();
+            let recip_z = p_3[2];
             let z_prod = recip_tri_area * recip_z;
             draw_interps[3] += e_tl * z_prod;
             step_info.dx_draw[3] += e_dx * z_prod;
