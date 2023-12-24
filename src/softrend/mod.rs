@@ -47,8 +47,7 @@ impl Renderer {
         let xr = 0.5 * std::f32::consts::PI * (time as f32 / 4250.0);
         let zr = 0.5 * std::f32::consts::PI * (time as f32 / 4000.0);
         let yr = 0.5 * std::f32::consts::PI * (time as f32 / 3500.0);
-        self.draw_cube([0.0, 0.0, 30.0], [xr, yr, zr], 3.0);
-        /*
+        //self.draw_cube([0.0, 0.0, 30.0], [xr, yr, zr], 3.0);
         for _ in 0..10 {
             /*
             for y in (0..1080).step_by(100) {
@@ -74,16 +73,15 @@ impl Renderer {
                 [0.0, 0.0, 10.0, 0.0, 0.0],
                 [1920.0 - 1.0, 0.0, 10.0, 127.0, 0.0],
                 [1920.0 - 1.0, 1080.0 - 1.0, 10.0, 127.0, 127.0],
-                assets::TEXTURES.get("checkerboard").unwrap(),
+                assets::TEXTURES.get("joemama").unwrap(),
             );
             self.raster.draw_tri(
                 [1920.0 - 1.0, 1080.0 - 1.0, 10.0, 127.0, 127.0],
                 [0.0, 1080.0 - 1.0, 10.0, 0.0, 127.0],
                 [0.0, 0.0, 10.0, 0.0, 0.0],
-                assets::TEXTURES.get("checkerboard").unwrap(),
+                assets::TEXTURES.get("joemama").unwrap(),
             );
         }
-        */
         &self.raster
     }
     fn compute_camera(&mut self) {

@@ -2,7 +2,7 @@ use super::assets;
 
 use std::simd::prelude::*;
 
-const TILE_SIZES: [usize; 3] = [4, 32, 128];
+const TILE_SIZES: [usize; 4] = [4, 16, 32, 128];
 const N_TILE_SIZES: usize = TILE_SIZES.len() + 1; // 1x1 tiles
 
 #[repr(C, align(128))]
@@ -157,7 +157,18 @@ impl Rasterizer {
                             texture,
                         );
                     }
-                    _ => {
+                    (_, true) => {
+                        self.step_tile(
+                            (x, y),
+                            (x + ts, y + ts),
+                            0,
+                            r_draw_interps,
+                            r_fill_interps,
+                            step_info,
+                            texture,
+                        );
+                    }
+                    (_, false) => {
                         self.step_tile(
                             (x, y),
                             (x + ts, y + ts),
@@ -209,8 +220,8 @@ impl Rasterizer {
             let persp_tx = (tx * z).simd_clamp(tex_min, tex_max);
             let persp_ty = (ty * z).simd_clamp(tex_min, tex_max);
 
-            let int_tx = unsafe { persp_tx.to_int_unchecked::<u32>() };
-            let int_ty = unsafe { persp_ty.to_int_unchecked::<u32>() };
+            let int_tx = unsafe { persp_tx.to_int_unchecked::<i32>().cast::<u32>() };
+            let int_ty = unsafe { persp_ty.to_int_unchecked::<i32>().cast::<u32>() };
             let texcoords = u32x4::splat(4) * int_tx
                 + u32x4::splat(assets::TEX_SIZE as u32 * 4) * int_ty;
 
