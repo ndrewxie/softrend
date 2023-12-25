@@ -24,7 +24,7 @@ pub struct Renderer {
 impl Renderer {
     pub fn new(width: usize, height: usize) -> Self {
         Self {
-            raster: Rasterizer::new(width, height),
+            raster: Rasterizer::new(width, height, NEAR / FAR),
             window_dims: (width, height),
             cam_loc: (0.0, 0.0, 0.0),
             cam_orient: (0.0, 0.0),
@@ -44,10 +44,39 @@ impl Renderer {
     pub fn draw_frame(&mut self, time: u128) -> &Rasterizer {
         self.raster.clear();
         self.compute_camera();
-        let xr = 0.5 * std::f32::consts::PI * (time as f32 / 4250.0);
+        let xr = 0.5 * std::f32::consts::PI * (time as f32 / 4500.0);
         let zr = 0.5 * std::f32::consts::PI * (time as f32 / 4000.0);
         let yr = 0.5 * std::f32::consts::PI * (time as f32 / 3500.0);
-        self.draw_cube([0.0, 0.0, 30.0], [xr, yr, zr], 3.0);
+        self.draw_cube(
+            [0.0, 0.0, 200.0],
+            [0.0, 0.0, 0.0],
+            100.0,
+            assets::TEXTURES.get("joemama").unwrap(),
+        );
+        self.draw_cube(
+            [0.0, 0.0, 30.0],
+            [xr, yr, zr],
+            6.0,
+            assets::TEXTURES.get("joemama").unwrap(),
+        );
+        self.draw_cube(
+            [0.0, 0.0, 30.0],
+            [zr + 0.75, xr, yr + 2.75],
+            6.0,
+            assets::TEXTURES.get("checkerboard").unwrap(),
+        );
+        self.draw_cube(
+            [0.0, 0.0, 30.0],
+            [yr + 1.35, zr + 2.0, xr],
+            6.0,
+            assets::TEXTURES.get("white").unwrap(),
+        );
+        self.draw_cube(
+            [0.0, 0.0, 30.0],
+            [0.5 * zr, yr + 2.75, xr],
+            6.0,
+            assets::TEXTURES.get("amogus").unwrap(),
+        );
         /*
         for _ in 0..10 {
             /*
@@ -108,7 +137,13 @@ impl Renderer {
         self.camera =
             screen_center * screen_scale * proj * alt_rot * azu_rot * trans;
     }
-    pub fn draw_cube(&mut self, center: [f32; 3], orientation: [f32; 3], size: f32) {
+    pub fn draw_cube(
+        &mut self,
+        center: [f32; 3],
+        orientation: [f32; 3],
+        size: f32,
+        tex: &'static assets::Texture,
+    ) {
         let rot = render_mats::translate(center[0], center[1], center[2])
             * render_mats::rot_x(orientation[0])
             * render_mats::rot_y(orientation[1])
@@ -129,55 +164,19 @@ impl Renderer {
         vertices.w_divide();
 
         // Back
-        self.draw_quadface(
-            vertices[6],
-            vertices[2],
-            vertices[0],
-            vertices[4],
-            "checkerboard",
-        );
+        self.draw_quadface(vertices[6], vertices[2], vertices[0], vertices[4], tex);
         // Front
-        self.draw_quadface(
-            vertices[7],
-            vertices[5],
-            vertices[1],
-            vertices[3],
-            "joemama",
-        );
+        self.draw_quadface(vertices[7], vertices[5], vertices[1], vertices[3], tex);
 
         // Left
-        self.draw_quadface(
-            vertices[7],
-            vertices[6],
-            vertices[4],
-            vertices[5],
-            "checkerboard",
-        );
+        self.draw_quadface(vertices[7], vertices[6], vertices[4], vertices[5], tex);
         // Right
-        self.draw_quadface(
-            vertices[3],
-            vertices[1],
-            vertices[0],
-            vertices[2],
-            "joemama",
-        );
+        self.draw_quadface(vertices[3], vertices[1], vertices[0], vertices[2], tex);
 
         // Bottom
-        self.draw_quadface(
-            vertices[7],
-            vertices[3],
-            vertices[2],
-            vertices[6],
-            "white",
-        );
+        self.draw_quadface(vertices[7], vertices[3], vertices[2], vertices[6], tex);
         // Top
-        self.draw_quadface(
-            vertices[5],
-            vertices[4],
-            vertices[0],
-            vertices[1],
-            "checkerboard",
-        );
+        self.draw_quadface(vertices[5], vertices[4], vertices[0], vertices[1], tex);
     }
     fn draw_quadface(
         &mut self,
@@ -185,19 +184,19 @@ impl Renderer {
         p2: [f32; 4],
         p3: [f32; 4],
         p4: [f32; 4],
-        tex: &'static str,
+        tex: &'static assets::Texture,
     ) {
         self.raster.draw_tri(
             [p1[0], p1[1], p1[2], 0.0, 0.0],
             [p2[0], p2[1], p2[2], 127.0, 0.0],
             [p3[0], p3[1], p3[2], 127.0, 127.0],
-            assets::TEXTURES.get(tex).unwrap(),
+            tex,
         );
         self.raster.draw_tri(
             [p3[0], p3[1], p3[2], 127.0, 127.0],
             [p4[0], p4[1], p4[2], 0.0, 127.0],
             [p1[0], p1[1], p1[2], 0.0, 0.0],
-            assets::TEXTURES.get(tex).unwrap(),
+            tex,
         );
     }
 }

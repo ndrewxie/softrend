@@ -11,6 +11,7 @@ struct MemAlign([u8; 128]);
 pub struct Rasterizer {
     pixels: &'static mut [u8],
     z_buf: Vec<f32>,
+    far_z: f32,
     pub width: usize,
     pub height: usize,
     real_dims: (usize, usize),
@@ -28,13 +29,14 @@ struct StepInfo {
 }
 
 impl Rasterizer {
-    pub fn new(width: usize, height: usize) -> Self {
+    pub fn new(width: usize, height: usize, far_z: f32) -> Self {
         let width_aligned = width.next_multiple_of(*TILE_SIZES.last().unwrap());
         let height_aligned = height.next_multiple_of(*TILE_SIZES.last().unwrap());
         let pixels = Self::alloc_framebuffer(width_aligned, height_aligned);
         Self {
             pixels,
-            z_buf: vec![0.0; width_aligned * height_aligned],
+            z_buf: vec![far_z; width_aligned * height_aligned],
+            far_z,
             width: width_aligned,
             height: height_aligned,
             real_dims: (width, height),
@@ -43,7 +45,7 @@ impl Rasterizer {
     /// Allocates a framebuffer, aligned to the alignment of MemAlign
     fn alloc_framebuffer(width: usize, height: usize) -> &'static mut [u8] {
         let fb_size = 4 * width * height;
-        let fb = vec![0; fb_size + 3 * std::mem::size_of::<MemAlign>()];
+        let fb = vec![0; fb_size + 4 * std::mem::size_of::<MemAlign>()];
         let fb_slice: &'static mut [u8] = Vec::leak(fb);
         unsafe {
             let (_, aligned_fb, _) = fb_slice.align_to_mut::<MemAlign>();
@@ -72,6 +74,7 @@ impl Rasterizer {
     }
     pub fn clear(&mut self) {
         self.pixels.fill(0);
+        self.z_buf.fill(self.far_z);
     }
     /// Draws the triangle `abc`, assuming vertices are in clockwise order.
     /// Points are specified with an array of 4 floats: (coord_x, coord_y, tx, ty, z)
@@ -116,15 +119,16 @@ impl Rasterizer {
     fn step_tile(
         &mut self,
         tl: (usize, usize),
-        br: (usize, usize),
+        mut br: (usize, usize),
         tsi: usize,
         mut draw_interps: f32x4,
         mut fill_interps: f32x4,
         step_info: &[StepInfo; N_TILE_SIZES],
         texture: &assets::Texture,
     ) {
-        let step: &StepInfo = &step_info[tsi];
         let ts = TILE_SIZES[tsi];
+        let step: &StepInfo = &step_info[tsi];
+
         let mut y = tl.1;
         while y < br.1 {
             let mut x = tl.0;
@@ -197,6 +201,13 @@ impl Rasterizer {
         step_info: &[StepInfo; N_TILE_SIZES],
         texture: &assets::Texture,
     ) {
+        assert_eq!(TILE_SIZES[0], 4);
+        // Both start indices and window size are aligned to inner tile size,
+        // so this check suffices
+        if tl.0 + 4 >= self.real_dims.0 || tl.1 + 4 >= self.real_dims.1 {
+            return;
+        }
+
         let step = &step_info[step_info.len() - 1];
         let offsets = f32x4::from_array([0.0, 1.0, 2.0, 3.0]);
         let mut rcp_z =
@@ -210,6 +221,7 @@ impl Rasterizer {
         let dty_dy = step.dy_fill[1];
 
         let mut index = 4 * (tl.1 * self.width + tl.0);
+        let mut z_index = tl.1 * self.width + tl.0;
         for _ in 0..4 {
             let mut row_draw_interps =
                 if ACCEPTED { f32x4::splat(0.0) } else { draw_interps };
@@ -227,13 +239,22 @@ impl Rasterizer {
 
             let pix_row =
                 unsafe { self.pixels.get_unchecked_mut(index..index + 16) };
-            for (tex_coord, pix) in
-                texcoords.as_array().iter().zip(pix_row.chunks_exact_mut(4))
+            let z_row =
+                unsafe { self.z_buf.get_unchecked_mut(z_index..z_index + 4) };
+            for (((tc, zv), pix), zix) in texcoords
+                .as_array()
+                .iter()
+                .zip(rcp_z.as_array())
+                .zip(pix_row.chunks_exact_mut(4))
+                .zip(z_row.iter_mut())
             {
                 if ACCEPTED || row_draw_interps.simd_ge(f32x4::splat(0.0)).all() {
-                    let ti = *tex_coord as usize;
-                    let tex = unsafe { texture.0.get_unchecked(ti..ti + 4) };
-                    pix.copy_from_slice(tex);
+                    if zv > zix {
+                        let ti = *tc as usize;
+                        let tex = unsafe { texture.0.get_unchecked(ti..ti + 4) };
+                        pix.copy_from_slice(tex);
+                        *zix = *zv;
+                    }
                 }
                 if !ACCEPTED {
                     row_draw_interps += step.dx_draw;
@@ -244,6 +265,7 @@ impl Rasterizer {
             tx += f32x4::splat(dtx_dy);
             ty += f32x4::splat(dty_dy);
             index += 4 * self.width;
+            z_index += self.width;
             if !ACCEPTED {
                 draw_interps += step.dy_draw;
             }

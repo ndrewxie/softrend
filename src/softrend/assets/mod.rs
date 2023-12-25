@@ -13,6 +13,7 @@ lazy_static! {
             "checkerboard",
             Texture(include_bytes!("./checkerboard.rgba").to_vec()),
         );
+        m.insert("amogus", Texture(include_bytes!("./amogus.rgba").to_vec()));
         m.insert("white", Texture(vec![255; 128 * 128 * 4]));
         m
     };

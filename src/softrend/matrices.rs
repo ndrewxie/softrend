@@ -3,13 +3,18 @@ use std::ops::{Index, IndexMut, Mul};
 
 pub struct Vec4([f32; 4]);
 // A 4x4 matrix, stored in row-major
+#[derive(Clone)]
 pub struct M4x4([f32; 16]);
 // A 4xn matrix, stored in column-major
+#[derive(Clone)]
 pub struct M4xn(Vec<[f32; 4]>);
 
 impl Vec4 {
     pub fn new() -> Self {
         Self([0.0; 4])
+    }
+    pub fn from_array(data: [f32; 4]) -> Self {
+        Self(data)
     }
 }
 impl M4x4 {
