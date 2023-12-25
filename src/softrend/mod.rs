@@ -6,7 +6,7 @@ use matrices::*;
 use rasterizer::Rasterizer;
 
 const NEAR: f32 = 4.0;
-const FAR: f32 = 128.0;
+const FAR: f32 = 256.0;
 const FOV: f32 = std::f32::consts::PI * 0.5;
 
 pub struct Renderer {
@@ -19,10 +19,17 @@ pub struct Renderer {
     cam_orient: (f32, f32),
 
     camera: M4x4,
+    mouse_sens: f32,
+    move_sens: f32,
 }
 
 impl Renderer {
-    pub fn new(width: usize, height: usize) -> Self {
+    pub fn new(
+        width: usize,
+        height: usize,
+        mouse_sens: f32,
+        move_sens: f32,
+    ) -> Self {
         Self {
             raster: Rasterizer::new(width, height, NEAR / FAR),
             window_dims: (width, height),
@@ -30,16 +37,24 @@ impl Renderer {
             cam_orient: (0.0, 0.0),
 
             camera: M4x4::new(),
+            mouse_sens,
+            move_sens,
         }
     }
-    pub fn move_cam(&mut self, dx: f32, dy: f32, dz: f32) {
-        self.cam_loc.0 += dx;
-        self.cam_loc.1 += dy;
-        self.cam_loc.2 += dz;
+    pub fn move_cam(&mut self, dx: f32, dz: f32) {
+        let forward = Vec4::from_array([dx, 0.0, dz, 1.0]) * self.move_sens;
+        let forward = self.compute_cam_rot() * forward;
+        self.cam_loc.0 += forward[0];
+        self.cam_loc.1 += forward[1];
+        self.cam_loc.2 += forward[2];
     }
     pub fn rot_cam(&mut self, dazu: f32, dinc: f32) {
-        self.cam_orient.0 += dazu;
-        self.cam_orient.1 += dinc;
+        let inc_limit = std::f32::consts::PI * 0.25;
+
+        self.cam_orient.0 += dazu * self.mouse_sens;
+        self.cam_orient.1 += dinc * self.mouse_sens;
+        self.cam_orient.1 =
+            self.cam_orient.1.clamp(-inc_limit + 0.05, inc_limit - 0.05);
     }
     pub fn draw_frame(&mut self, time: u128) -> &Rasterizer {
         self.raster.clear();
@@ -47,12 +62,14 @@ impl Renderer {
         let xr = 0.5 * std::f32::consts::PI * (time as f32 / 4500.0);
         let zr = 0.5 * std::f32::consts::PI * (time as f32 / 4000.0);
         let yr = 0.5 * std::f32::consts::PI * (time as f32 / 3500.0);
+        /*
         self.draw_cube(
             [0.0, 0.0, 200.0],
             [0.0, 0.0, 0.0],
             100.0,
             assets::TEXTURES.get("joemama").unwrap(),
         );
+        */
         self.draw_cube(
             [0.0, 0.0, 30.0],
             [xr, yr, zr],
@@ -65,6 +82,7 @@ impl Renderer {
             6.0,
             assets::TEXTURES.get("checkerboard").unwrap(),
         );
+        /*
         self.draw_cube(
             [0.0, 0.0, 30.0],
             [yr + 1.35, zr + 2.0, xr],
@@ -77,6 +95,7 @@ impl Renderer {
             6.0,
             assets::TEXTURES.get("amogus").unwrap(),
         );
+        */
         /*
         for _ in 0..10 {
             /*
@@ -124,8 +143,7 @@ impl Renderer {
             -self.cam_loc.1,
             -self.cam_loc.2,
         );
-        let azu_rot = render_mats::rot_y(self.cam_orient.0);
-        let alt_rot = render_mats::rot_x(self.cam_orient.1);
+        let cam_rot = self.compute_cam_rot();
         let proj = render_mats::proj(NEAR, FAR, FOV);
         let screen_scale = render_mats::scale(max_dim, -max_dim, 1.0);
         let screen_center = render_mats::translate(
@@ -134,10 +152,14 @@ impl Renderer {
             0.0,
         );
 
-        self.camera =
-            screen_center * screen_scale * proj * alt_rot * azu_rot * trans;
+        self.camera = screen_center * screen_scale * proj * cam_rot * trans;
     }
-    pub fn draw_cube(
+    fn compute_cam_rot(&self) -> M4x4 {
+        let azu_rot = render_mats::rot_y(self.cam_orient.0);
+        let alt_rot = render_mats::rot_x(self.cam_orient.1);
+        alt_rot * azu_rot
+    }
+    fn draw_cube(
         &mut self,
         center: [f32; 3],
         orientation: [f32; 3],

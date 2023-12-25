@@ -124,6 +124,13 @@ pub mod render_mats {
     }
 }
 
+impl Mul<f32> for Vec4 {
+    type Output = Vec4;
+    fn mul(mut self, by: f32) -> Vec4 {
+        self.0.iter_mut().for_each(|x| *x *= by);
+        self
+    }
+}
 impl Mul<M4x4> for M4x4 {
     type Output = M4x4;
     fn mul(self, by: M4x4) -> M4x4 {
@@ -138,9 +145,9 @@ impl Mul<M4x4> for M4x4 {
         acc
     }
 }
-impl Mul<&Vec4> for &M4x4 {
+impl Mul<Vec4> for M4x4 {
     type Output = Vec4;
-    fn mul(self, by: &Vec4) -> Vec4 {
+    fn mul(self, by: Vec4) -> Vec4 {
         let mut acc = Vec4::new();
         for i in 0..4 {
             for j in 0..4 {
