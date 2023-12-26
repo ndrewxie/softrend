@@ -59,79 +59,59 @@ impl Renderer {
     pub fn draw_frame(&mut self, time: u128) -> &Rasterizer {
         self.raster.clear();
         self.compute_camera();
-        let xr = 0.5 * std::f32::consts::PI * (time as f32 / 4500.0);
-        let zr = 0.5 * std::f32::consts::PI * (time as f32 / 4000.0);
-        let yr = 0.5 * std::f32::consts::PI * (time as f32 / 3500.0);
-        /*
-        self.draw_cube(
-            [0.0, 0.0, 200.0],
-            [0.0, 0.0, 0.0],
-            100.0,
-            assets::TEXTURES.get("joemama").unwrap(),
-        );
-        */
-        self.draw_cube(
-            [0.0, 0.0, 30.0],
-            [xr, yr, zr],
-            6.0,
-            assets::TEXTURES.get("joemama").unwrap(),
-        );
-        self.draw_cube(
-            [0.0, 0.0, 30.0],
-            [zr + 0.75, xr, yr + 2.75],
-            6.0,
-            assets::TEXTURES.get("checkerboard").unwrap(),
-        );
-        /*
-        self.draw_cube(
-            [0.0, 0.0, 30.0],
-            [yr + 1.35, zr + 2.0, xr],
-            6.0,
-            assets::TEXTURES.get("white").unwrap(),
-        );
-        self.draw_cube(
-            [0.0, 0.0, 30.0],
-            [0.5 * zr, yr + 2.75, xr],
-            6.0,
-            assets::TEXTURES.get("amogus").unwrap(),
-        );
-        */
-        /*
-        for _ in 0..10 {
-            /*
-            for y in (0..1080).step_by(100) {
-                for x in (0..1920).step_by(100) {
-                    let (x0, y0) = (x as f32, y as f32);
-                    let (x1, y1) = (x0 + 100.0, y0 + 100.0);
-                    self.raster.draw_tri(
-                        [x0, y0, 0.0, 0.0, 0.0],
-                        [x1, y0, 0.0, 127.0, 0.0],
-                        [x1, y1, 127.0, 127.0, 0.0],
-                        assets::TEXTURES.get("checkerboard").unwrap(),
-                    );
-                    self.raster.draw_tri(
-                        [x1, y1, 0.0, 0.0, 0.0],
-                        [x0, y1, 0.0, 127.0, 0.0],
-                        [x0, y0, 127.0, 127.0, 0.0],
+
+        fn draw_z_test(rend: &mut Renderer, time: u128) {
+            let xr = 0.5 * std::f32::consts::PI * (time as f32 / 4500.0);
+            let zr = 0.5 * std::f32::consts::PI * (time as f32 / 4000.0);
+            let yr = 0.5 * std::f32::consts::PI * (time as f32 / 3500.0);
+            rend.draw_cube(
+                [0.0, 0.0, 200.0],
+                [0.0, 0.0, 0.0],
+                100.0,
+                assets::TEXTURES.get("joemama").unwrap(),
+            );
+            rend.draw_cube(
+                [0.0, 0.0, 30.0],
+                [xr, yr, zr],
+                6.0,
+                assets::TEXTURES.get("joemama").unwrap(),
+            );
+            rend.draw_cube(
+                [0.0, 0.0, 30.0],
+                [zr + 0.75, xr, yr + 2.75],
+                6.0,
+                assets::TEXTURES.get("checkerboard").unwrap(),
+            );
+        }
+        fn draw_fill_test(rend: &mut Renderer, time: u128) {
+            for _ in 0..10 {
+                rend.raster.draw_tri(
+                    [0.0, 0.0, 10.0, 0.0, 0.0],
+                    [1920.0 - 1.0, 0.0, 10.0, 127.0, 0.0],
+                    [1920.0 - 1.0, 1080.0 - 1.0, 10.0, 127.0, 127.0],
+                    assets::TEXTURES.get("joemama").unwrap(),
+                );
+                rend.raster.draw_tri(
+                    [1920.0 - 1.0, 1080.0 - 1.0, 10.0, 127.0, 127.0],
+                    [0.0, 1080.0 - 1.0, 10.0, 0.0, 127.0],
+                    [0.0, 0.0, 10.0, 0.0, 0.0],
+                    assets::TEXTURES.get("joemama").unwrap(),
+                );
+            }
+        }
+        fn draw_lag_test(rend: &mut Renderer, time: u128) {
+            for x in (-50..=50).step_by(10) {
+                for y in (-50..=50).step_by(10) {
+                    rend.draw_cube(
+                        [x as f32, y as f32, 10.0],
+                        [0.0, 0.0, 0.0],
+                        5.0,
                         assets::TEXTURES.get("checkerboard").unwrap(),
                     );
                 }
             }
-            */
-            self.raster.draw_tri(
-                [0.0, 0.0, 10.0, 0.0, 0.0],
-                [1920.0 - 1.0, 0.0, 10.0, 127.0, 0.0],
-                [1920.0 - 1.0, 1080.0 - 1.0, 10.0, 127.0, 127.0],
-                assets::TEXTURES.get("joemama").unwrap(),
-            );
-            self.raster.draw_tri(
-                [1920.0 - 1.0, 1080.0 - 1.0, 10.0, 127.0, 127.0],
-                [0.0, 1080.0 - 1.0, 10.0, 0.0, 127.0],
-                [0.0, 0.0, 10.0, 0.0, 0.0],
-                assets::TEXTURES.get("joemama").unwrap(),
-            );
         }
-        */
+        draw_lag_test(self, time);
         &self.raster
     }
     fn compute_camera(&mut self) {
