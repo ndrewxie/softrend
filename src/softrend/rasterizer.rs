@@ -11,7 +11,6 @@ struct MemAlign([u8; 128]);
 pub struct Rasterizer {
     pixels: &'static mut [u8],
     z_buf: Vec<f32>,
-    far_z: f32,
     pub width: usize,
     pub height: usize,
     real_dims: (usize, usize),
@@ -29,14 +28,13 @@ struct StepInfo {
 }
 
 impl Rasterizer {
-    pub fn new(width: usize, height: usize, far_z: f32) -> Self {
+    pub fn new(width: usize, height: usize) -> Self {
         let width_aligned = width.next_multiple_of(*TILE_SIZES.last().unwrap());
         let height_aligned = height.next_multiple_of(*TILE_SIZES.last().unwrap());
         let pixels = Self::alloc_framebuffer(width_aligned, height_aligned);
         Self {
             pixels,
-            z_buf: vec![far_z; width_aligned * height_aligned],
-            far_z,
+            z_buf: vec![0.0; width_aligned * height_aligned],
             width: width_aligned,
             height: height_aligned,
             real_dims: (width, height),
@@ -74,7 +72,7 @@ impl Rasterizer {
     }
     pub fn clear(&mut self) {
         self.pixels.fill(0);
-        self.z_buf.fill(self.far_z);
+        self.z_buf.fill(0.0);
     }
     /// Draws the triangle `abc`, assuming vertices are in clockwise order.
     /// Points are specified with an array of 4 floats: (coord_x, coord_y, tx, ty, z)

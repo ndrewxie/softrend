@@ -31,7 +31,7 @@ impl Renderer {
         move_sens: f32,
     ) -> Self {
         Self {
-            raster: Rasterizer::new(width, height, NEAR / FAR),
+            raster: Rasterizer::new(width, height),
             window_dims: (width, height),
             cam_loc: (0.0, 0.0, 0.0),
             cam_orient: (0.0, 0.0),
@@ -111,7 +111,7 @@ impl Renderer {
                 }
             }
         }
-        draw_lag_test(self, time);
+        draw_z_test(self, time);
         &self.raster
     }
     fn compute_camera(&mut self) {

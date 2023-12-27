@@ -107,10 +107,10 @@ pub mod render_mats {
         let inv_hnw = half_near_width.recip();
 
         M4x4::from_slice([
-            inv_hnw, 0.0,     0.0,              0.0,
-            0.0,     inv_hnw, 0.0,              0.0,
-            0.0,     0.0,     0.0,              1.0,
-            0.0,     0.0,     near.recip(),     0.0
+            inv_hnw, 0.0,     0.0,  0.0,
+            0.0,     inv_hnw, 0.0,  0.0,
+            0.0,     0.0,     0.0,  near.recip(),
+            0.0,     0.0,     1.0,  0.0
         ])
     }
     #[rustfmt::skip]
