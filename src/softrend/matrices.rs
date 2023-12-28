@@ -1,13 +1,14 @@
 use std::fmt;
-use std::ops::{Index, IndexMut, Mul};
+use std::ops::{Add, Index, IndexMut, Mul, Sub};
 
+#[derive(Clone, Copy)]
 pub struct Vec4([f32; 4]);
 // A 4x4 matrix, stored in row-major
 #[derive(Clone)]
 pub struct M4x4([f32; 16]);
 // A 4xn matrix, stored in column-major
 #[derive(Clone)]
-pub struct M4xn(Vec<[f32; 4]>);
+pub struct M4xn(pub Vec<Vec4>);
 
 impl Vec4 {
     pub fn new() -> Self {
@@ -15,6 +16,10 @@ impl Vec4 {
     }
     pub fn from_array(data: [f32; 4]) -> Self {
         Self(data)
+    }
+    pub fn w_div(&mut self) {
+        let w = self[3];
+        self.0.iter_mut().for_each(|x| *x /= w);
     }
 }
 impl M4x4 {
@@ -28,28 +33,38 @@ impl M4x4 {
         for in_col in by.0.iter_mut() {
             let mut temp = [0.0; 4];
             for (i, coeff_row) in self.0.chunks_exact(4).enumerate() {
-                temp[i] =
-                    in_col.iter().zip(coeff_row.iter()).map(|(&a, &b)| a * b).sum();
+                temp[i] = in_col
+                    .0
+                    .iter()
+                    .zip(coeff_row.iter())
+                    .map(|(&a, &b)| a * b)
+                    .sum();
             }
-            in_col.copy_from_slice(&temp);
+            in_col.0.copy_from_slice(&temp);
         }
     }
 }
 impl M4xn {
     pub fn new(n: usize) -> Self {
-        Self(vec![[0.0; 4]; n])
+        Self(vec![Vec4::new(); n])
     }
-    pub fn from_vec(input: Vec<[f32; 4]>) -> Self {
+    pub fn with_capacity(n: usize) -> Self {
+        Self(Vec::with_capacity(n))
+    }
+    pub fn from_vec(input: Vec<Vec4>) -> Self {
         Self(input)
     }
     pub fn n(&self) -> usize {
         self.0.len()
     }
     pub fn w_divide(&mut self) {
-        for point in self.0.iter_mut() {
-            let w = point[3];
-            point.iter_mut().for_each(|x| *x /= w);
-        }
+        self.0.iter_mut().for_each(|x| x.w_div());
+    }
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+    pub fn push(&mut self, point: Vec4) {
+        self.0.push(point);
     }
 }
 
@@ -103,15 +118,20 @@ pub mod render_mats {
     }
     #[rustfmt::skip]
     pub fn proj(near: f32, far: f32, fov: f32) -> M4x4 {
-        let half_near_width = 0.5 * near as f32 * (fov * 0.5).tan();
+        let half_near_width = near as f32 * (fov * 0.5).tan();
         let inv_hnw = half_near_width.recip();
 
+        let a = near * far / (far - near);
+        let b = near / (near - far);
         M4x4::from_slice([
             inv_hnw, 0.0,     0.0,  0.0,
             0.0,     inv_hnw, 0.0,  0.0,
-            0.0,     0.0,     0.0,  near.recip(),
+            0.0,     0.0,     b,    a,
             0.0,     0.0,     1.0,  0.0
         ])
+    }
+    pub fn proj_z_offset(near: f32, far: f32, _fov: f32) -> f32 {
+        near / (near - far)
     }
     #[rustfmt::skip]
     pub fn identity() -> M4x4 {
@@ -124,6 +144,27 @@ pub mod render_mats {
     }
 }
 
+impl Add<Vec4> for Vec4 {
+    type Output = Vec4;
+    fn add(mut self, by: Vec4) -> Vec4 {
+        self.0.iter_mut().zip(&by.0).for_each(|(x, b)| *x += b);
+        self
+    }
+}
+impl Sub<Vec4> for Vec4 {
+    type Output = Vec4;
+    fn sub(mut self, by: Vec4) -> Vec4 {
+        self.0.iter_mut().zip(&by.0).for_each(|(x, b)| *x -= b);
+        self
+    }
+}
+impl Mul<Vec4> for Vec4 {
+    type Output = Vec4;
+    fn mul(mut self, by: Vec4) -> Vec4 {
+        self.0.iter_mut().zip(&by.0).for_each(|(x, b)| *x *= b);
+        self
+    }
+}
 impl Mul<f32> for Vec4 {
     type Output = Vec4;
     fn mul(mut self, by: f32) -> Vec4 {
@@ -182,13 +223,13 @@ impl IndexMut<(usize, usize)> for M4x4 {
     }
 }
 impl Index<usize> for M4xn {
-    type Output = [f32; 4];
-    fn index(&self, index: usize) -> &[f32; 4] {
+    type Output = Vec4;
+    fn index(&self, index: usize) -> &Vec4 {
         unsafe { self.0.get_unchecked(index) }
     }
 }
 impl IndexMut<usize> for M4xn {
-    fn index_mut(&mut self, index: usize) -> &mut [f32; 4] {
+    fn index_mut(&mut self, index: usize) -> &mut Vec4 {
         unsafe { self.0.get_unchecked_mut(index) }
     }
 }
@@ -211,7 +252,7 @@ impl fmt::Display for M4xn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
         for row in self.0.iter() {
-            write!(f, "\n    {:?}", row)?;
+            write!(f, "\n    {}", row)?;
         }
         write!(f, "\n]")
     }

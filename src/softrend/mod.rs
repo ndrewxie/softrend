@@ -5,9 +5,11 @@ mod rasterizer;
 use matrices::*;
 use rasterizer::Rasterizer;
 
-const NEAR: f32 = 4.0;
-const FAR: f32 = 256.0;
-const FOV: f32 = std::f32::consts::PI * 0.5;
+const NEAR: f32 = 1.5;
+const FAR: f32 = 128.0;
+const FOV: f32 = std::f32::consts::PI * 0.7;
+
+type Tex = &'static assets::Texture;
 
 pub struct Renderer {
     raster: Rasterizer,
@@ -18,7 +20,11 @@ pub struct Renderer {
     /// (rotation, inclination) camera orientation
     cam_orient: (f32, f32),
 
-    camera: M4x4,
+    vertices: M4xn,
+    tris: Vec<([(usize, [f32; 2]); 3], Tex)>,
+
+    world_proj: M4x4,
+    viewport: M4x4,
     mouse_sens: f32,
     move_sens: f32,
 }
@@ -36,7 +42,11 @@ impl Renderer {
             cam_loc: (0.0, 0.0, 0.0),
             cam_orient: (0.0, 0.0),
 
-            camera: M4x4::new(),
+            vertices: M4xn::with_capacity(128),
+            tris: Vec::with_capacity(128),
+
+            world_proj: M4x4::new(),
+            viewport: M4x4::new(),
             mouse_sens,
             move_sens,
         }
@@ -49,7 +59,7 @@ impl Renderer {
         self.cam_loc.2 += forward[2];
     }
     pub fn rot_cam(&mut self, dazu: f32, dinc: f32) {
-        let inc_limit = std::f32::consts::PI * 0.25;
+        let inc_limit = std::f32::consts::PI * 0.5;
 
         self.cam_orient.0 += dazu * self.mouse_sens;
         self.cam_orient.1 += dinc * self.mouse_sens;
@@ -67,19 +77,19 @@ impl Renderer {
             rend.draw_cube(
                 [0.0, 0.0, 200.0],
                 [0.0, 0.0, 0.0],
-                100.0,
+                [100.0; 3],
                 assets::TEXTURES.get("joemama").unwrap(),
             );
             rend.draw_cube(
                 [0.0, 0.0, 30.0],
                 [xr, yr, zr],
-                6.0,
+                [6.0; 3],
                 assets::TEXTURES.get("joemama").unwrap(),
             );
             rend.draw_cube(
                 [0.0, 0.0, 30.0],
                 [zr + 0.75, xr, yr + 2.75],
-                6.0,
+                [6.0; 3],
                 assets::TEXTURES.get("checkerboard").unwrap(),
             );
         }
@@ -99,19 +109,27 @@ impl Renderer {
                 );
             }
         }
-        fn draw_lag_test(rend: &mut Renderer, time: u128) {
+        fn draw_near_clip_test(rend: &mut Renderer, time: u128) {
             for x in (-50..=50).step_by(10) {
                 for y in (-50..=50).step_by(10) {
                     rend.draw_cube(
                         [x as f32, y as f32, 10.0],
                         [0.0, 0.0, 0.0],
-                        5.0,
+                        [5.0; 3],
                         assets::TEXTURES.get("checkerboard").unwrap(),
                     );
                 }
             }
         }
-        draw_z_test(self, time);
+        fn draw_floor_test(rend: &mut Renderer, time: u128) {
+            rend.draw_cube(
+                [0.0, -100.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 1000.0],
+                assets::TEXTURES.get("joemama").unwrap(),
+            );
+        }
+        draw_floor_test(self, time);
         &self.raster
     }
     fn compute_camera(&mut self) {
@@ -125,6 +143,11 @@ impl Renderer {
         );
         let cam_rot = self.compute_cam_rot();
         let proj = render_mats::proj(NEAR, FAR, FOV);
+        let z_shift = render_mats::translate(
+            0.0,
+            0.0,
+            -render_mats::proj_z_offset(NEAR, FAR, FOV),
+        );
         let screen_scale = render_mats::scale(max_dim, -max_dim, 1.0);
         let screen_center = render_mats::translate(
             0.5 * self.window_dims.0 as f32,
@@ -132,73 +155,139 @@ impl Renderer {
             0.0,
         );
 
-        self.camera = screen_center * screen_scale * proj * cam_rot * trans;
+        self.viewport = screen_center * screen_scale * z_shift;
+        self.world_proj = proj * cam_rot * trans;
     }
     fn compute_cam_rot(&self) -> M4x4 {
         let azu_rot = render_mats::rot_y(self.cam_orient.0);
         let alt_rot = render_mats::rot_x(self.cam_orient.1);
         alt_rot * azu_rot
     }
-    fn draw_cube(
-        &mut self,
-        center: [f32; 3],
-        orientation: [f32; 3],
-        size: f32,
-        tex: &'static assets::Texture,
-    ) {
-        let rot = render_mats::translate(center[0], center[1], center[2])
+    #[rustfmt::skip]
+    fn draw_cube(&mut self, loc: [f32; 3], orientation: [f32; 3], s: [f32; 3], tex: Tex) {
+        let rot = render_mats::translate(loc[0], loc[1], loc[2])
             * render_mats::rot_x(orientation[0])
             * render_mats::rot_y(orientation[1])
             * render_mats::rot_z(orientation[2])
-            * render_mats::translate(-center[0], -center[1], -center[2]);
-        let mut vertices = M4xn::from_vec(vec![
-            [center[0] + size, center[1] + size, center[2] + size, 1.0], // 0
-            [center[0] + size, center[1] + size, center[2] - size, 1.0], // 1
-            [center[0] + size, center[1] - size, center[2] + size, 1.0], // 2
-            [center[0] + size, center[1] - size, center[2] - size, 1.0], // 3
-            [center[0] - size, center[1] + size, center[2] + size, 1.0], // 4
-            [center[0] - size, center[1] + size, center[2] - size, 1.0], // 5
-            [center[0] - size, center[1] - size, center[2] + size, 1.0], // 6
-            [center[0] - size, center[1] - size, center[2] - size, 1.0], // 7
-        ]);
-        rot.mul_packed(&mut vertices);
-        self.camera.mul_packed(&mut vertices);
-        vertices.w_divide();
+            * render_mats::translate(-loc[0], -loc[1], -loc[2]);
 
-        // Back
-        self.draw_quadface(vertices[6], vertices[2], vertices[0], vertices[4], tex);
-        // Front
-        self.draw_quadface(vertices[7], vertices[5], vertices[1], vertices[3], tex);
+        self.add_vert(Vec4::from_array([loc[0] + s[0], loc[1] + s[1], loc[2] + s[2], 1.0])); // 0
+        self.add_vert(Vec4::from_array([loc[0] + s[0], loc[1] + s[1], loc[2] - s[2], 1.0])); // 1
+        self.add_vert(Vec4::from_array([loc[0] + s[0], loc[1] - s[1], loc[2] + s[2], 1.0])); // 2
+        self.add_vert(Vec4::from_array([loc[0] + s[0], loc[1] - s[1], loc[2] - s[2], 1.0])); // 3
+        self.add_vert(Vec4::from_array([loc[0] - s[0], loc[1] + s[1], loc[2] + s[2], 1.0])); // 4
+        self.add_vert(Vec4::from_array([loc[0] - s[0], loc[1] + s[1], loc[2] - s[2], 1.0])); // 5
+        self.add_vert(Vec4::from_array([loc[0] - s[0], loc[1] - s[1], loc[2] + s[2], 1.0])); // 6
+        self.add_vert(Vec4::from_array([loc[0] - s[0], loc[1] - s[1], loc[2] - s[2], 1.0])); // 7
 
-        // Left
-        self.draw_quadface(vertices[7], vertices[6], vertices[4], vertices[5], tex);
-        // Right
-        self.draw_quadface(vertices[3], vertices[1], vertices[0], vertices[2], tex);
+        self.add_quad((6, [0.0, 0.0]), (2, [0.0, 127.0]), (0, [127.0, 127.0]), (4, [0.0, 127.0]), tex);
+        self.add_quad((7, [0.0, 0.0]), (5, [0.0, 127.0]), (1, [127.0, 127.0]), (3, [0.0, 127.0]), tex);
+        self.add_quad((7, [0.0, 0.0]), (6, [0.0, 127.0]), (4, [127.0, 127.0]), (5, [0.0, 127.0]), tex);
+        self.add_quad((3, [0.0, 0.0]), (1, [0.0, 127.0]), (0, [127.0, 127.0]), (2, [0.0, 127.0]), tex);
+        self.add_quad((7, [0.0, 0.0]), (3, [0.0, 127.0]), (2, [127.0, 127.0]), (6, [0.0, 127.0]), tex);
+        self.add_quad((5, [0.0, 0.0]), (4, [0.0, 127.0]), (0, [127.0, 127.0]), (1, [0.0, 127.0]), tex);
 
-        // Bottom
-        self.draw_quadface(vertices[7], vertices[3], vertices[2], vertices[6], tex);
-        // Top
-        self.draw_quadface(vertices[5], vertices[4], vertices[0], vertices[1], tex);
+        self.draw_model(&rot);
     }
-    fn draw_quadface(
+    fn draw_model(&mut self, model: &M4x4) {
+        let mut clip_points: M4xn = M4xn::with_capacity(4);
+        let mut clip_tex: Vec<[f32; 2]> = Vec::with_capacity(4);
+        model.mul_packed(&mut self.vertices);
+        self.world_proj.mul_packed(&mut self.vertices);
+        for (tri, tex) in self.tris.iter_mut() {
+            clip_points.clear();
+            clip_tex.clear();
+            // Use w coordinate to infer clip/no clip, as projection copies
+            // z to w
+            let mut p_clips = [true; 3];
+            for (p, p_clip) in tri.iter().zip(p_clips.iter_mut()) {
+                *p_clip = self.vertices[p.0][3] >= NEAR;
+            }
+            if p_clips.iter().all(|x| !*x) {
+                continue;
+            }
+            if p_clips.iter().all(|x| *x) {
+                // No clipping needed
+                for (p, tex) in tri.iter() {
+                    clip_points.push(self.vertices[*p]);
+                    clip_tex.push(tex.clone());
+                }
+            } else {
+                // Clipping
+                let first_valid = p_clips.iter().position(|x| *x).unwrap();
+                clip_points.push(self.vertices[tri[first_valid].0]);
+                clip_tex.push(tri[first_valid].1);
+                for i in 1..4_isize {
+                    let cei = ((first_valid as isize + i) % 3) as usize;
+                    let lei = ((first_valid as isize + i - 1) % 3) as usize;
+                    let vertex = self.vertices[tri[cei].0];
+                    let crosses_near = p_clips[cei] != p_clips[lei];
+                    if !crosses_near {
+                        if !p_clips[cei] {
+                            // Two points behind near do not produce a new point
+                            continue;
+                        }
+                        clip_points.push(vertex);
+                        clip_tex.push(tri[cei].1);
+                        continue;
+                    }
+                    let last_vertex = self.vertices[tri[lei].0];
+                    let (zc, zl) = (vertex[3], last_vertex[3]);
+                    // No div by zero, as crosses_near => zc != zl
+                    let t = (NEAR - zl) / (zc - zl);
+                    let p = last_vertex + (vertex - last_vertex) * t;
+                    let mut tex = tri[lei].1;
+                    for (tex, curr_tex) in tex.iter_mut().zip(tri[cei].1) {
+                        *tex = *tex * (1.0 - t) + t * curr_tex;
+                    }
+                    clip_points.push(p);
+                    clip_tex.push(tex);
+                }
+            }
+            clip_points.w_divide();
+            self.viewport.mul_packed(&mut clip_points);
+            let mut win = 1;
+            while win + 1 < clip_points.n() {
+                let (pa, ta) = (&clip_points[0], &clip_tex[0]);
+                let (pb, tb) = (&clip_points[win], &clip_tex[win]);
+                let (pc, tc) = (&clip_points[win + 1], &clip_tex[win + 1]);
+                self.raster.draw_tri(
+                    [pa[0], pa[1], pa[2], ta[0], ta[1]],
+                    [pb[0], pb[1], pb[2], tb[0], tb[1]],
+                    [pc[0], pc[1], pc[2], tc[0], tc[1]],
+                    tex,
+                );
+                win += 1;
+            }
+        }
+        self.clear_obj();
+    }
+    pub fn add_vert(&mut self, vert: Vec4) -> usize {
+        self.vertices.push(vert);
+        self.vertices.n() - 1
+    }
+    pub fn add_tri(
         &mut self,
-        p1: [f32; 4],
-        p2: [f32; 4],
-        p3: [f32; 4],
-        p4: [f32; 4],
-        tex: &'static assets::Texture,
+        a: (usize, [f32; 2]),
+        b: (usize, [f32; 2]),
+        c: (usize, [f32; 2]),
+        tex: Tex,
     ) {
-        self.raster.draw_tri(
-            [p1[0], p1[1], p1[2], 0.0, 0.0],
-            [p2[0], p2[1], p2[2], 127.0, 0.0],
-            [p3[0], p3[1], p3[2], 127.0, 127.0],
-            tex,
-        );
-        self.raster.draw_tri(
-            [p3[0], p3[1], p3[2], 127.0, 127.0],
-            [p4[0], p4[1], p4[2], 0.0, 127.0],
-            [p1[0], p1[1], p1[2], 0.0, 0.0],
-            tex,
-        );
+        self.tris.push(([a, b, c], tex));
+    }
+    pub fn add_quad(
+        &mut self,
+        a: (usize, [f32; 2]),
+        b: (usize, [f32; 2]),
+        c: (usize, [f32; 2]),
+        d: (usize, [f32; 2]),
+        tex: Tex,
+    ) {
+        self.tris.push(([a, b, c], tex));
+        self.tris.push(([c, d, a], tex))
+    }
+    pub fn clear_obj(&mut self) {
+        self.vertices.clear();
+        self.tris.clear();
     }
 }

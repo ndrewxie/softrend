@@ -997,6 +997,7 @@ name = "softrend4"
 version = "0.1.0"
 dependencies = [
  "lazy_static",
+ "smallvec",
  "softbuffer",
  "winit",
 ]
