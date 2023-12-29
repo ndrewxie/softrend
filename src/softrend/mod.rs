@@ -129,7 +129,7 @@ impl Renderer {
                 assets::TEXTURES.get("joemama").unwrap(),
             );
         }
-        draw_floor_test(self, time);
+        draw_near_clip_test(self, time);
         &self.raster
     }
     fn compute_camera(&mut self) {
@@ -217,9 +217,9 @@ impl Renderer {
                 let first_valid = p_clips.iter().position(|x| *x).unwrap();
                 clip_points.push(self.vertices[tri[first_valid].0]);
                 clip_tex.push(tri[first_valid].1);
-                for i in 1..4_isize {
-                    let cei = ((first_valid as isize + i) % 3) as usize;
-                    let lei = ((first_valid as isize + i - 1) % 3) as usize;
+                for i in 1..=3_isize {
+                    let cei = (first_valid as isize + i).rem_euclid(3) as usize;
+                    let lei = (first_valid as isize + i - 1).rem_euclid(3) as usize;
                     let vertex = self.vertices[tri[cei].0];
                     let crosses_near = p_clips[cei] != p_clips[lei];
                     if !crosses_near {
@@ -242,6 +242,10 @@ impl Renderer {
                     }
                     clip_points.push(p);
                     clip_tex.push(tex);
+                    if p_clips[cei] {
+                        clip_points.push(vertex);
+                        clip_tex.push(tri[cei].1);
+                    }
                 }
             }
             clip_points.w_divide();

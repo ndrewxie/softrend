@@ -172,6 +172,13 @@ impl Mul<f32> for Vec4 {
         self
     }
 }
+impl Mul<f64> for Vec4 {
+    type Output = Vec4;
+    fn mul(mut self, by: f64) -> Vec4 {
+        self.0.iter_mut().for_each(|x| *x = (*x as f64 * by) as f32);
+        self
+    }
+}
 impl Mul<M4x4> for M4x4 {
     type Output = M4x4;
     fn mul(self, by: M4x4) -> M4x4 {

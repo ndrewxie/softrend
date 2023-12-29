@@ -1,9 +1,16 @@
 use lazy_static::lazy_static;
 use std::collections::HashMap;
+use std::fmt;
 
 pub const TEX_SIZE: usize = 128;
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Texture(pub Vec<u8>);
+
+impl fmt::Debug for Texture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Tex")
+    }
+}
 
 lazy_static! {
     pub static ref TEXTURES: HashMap<&'static str, Texture> = {
