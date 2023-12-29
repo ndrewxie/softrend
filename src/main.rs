@@ -48,13 +48,12 @@ fn main() {
     event_loop
         .run(move |event, elwt| {
             elwt.set_control_flow(ControlFlow::Wait);
-            if let Event::DeviceEvent { event, .. } = &event {
-                match event {
-                    DeviceEvent::MouseMotion { delta } => {
-                        renderer.rot_cam(delta.0 as f32, delta.1 as f32);
-                    }
-                    _ => (),
-                }
+            if let Event::DeviceEvent {
+                event: DeviceEvent::MouseMotion { delta },
+                ..
+            } = &event
+            {
+                renderer.rot_cam(delta.0 as f32, delta.1 as f32);
             }
             if let Event::WindowEvent { event, .. } = &event {
                 match event {

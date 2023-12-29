@@ -21,7 +21,9 @@ pub struct Renderer {
     cam_orient: (f32, f32),
 
     vertices: M4xn,
-    tris: Vec<([(usize, [f32; 2]); 3], Tex)>,
+    vertex_attrs: Vec<[f32; 2]>,
+    tris: Vec<[usize; 3]>,
+    bound_tex: Tex,
 
     world_proj: M4x4,
     viewport: M4x4,
@@ -43,7 +45,9 @@ impl Renderer {
             cam_orient: (0.0, 0.0),
 
             vertices: M4xn::with_capacity(128),
-            tris: Vec::with_capacity(128),
+            tris: Vec::with_capacity(64),
+            vertex_attrs: Vec::with_capacity(64),
+            bound_tex: assets::TEXTURES.get("white").unwrap(),
 
             world_proj: M4x4::new(),
             viewport: M4x4::new(),
@@ -165,27 +169,33 @@ impl Renderer {
     }
     #[rustfmt::skip]
     fn draw_cube(&mut self, loc: [f32; 3], orientation: [f32; 3], s: [f32; 3], tex: Tex) {
+        fn v4(arr: [f32; 4]) -> Vec4 {
+            Vec4::from_array(arr)
+        }
+
         let rot = render_mats::translate(loc[0], loc[1], loc[2])
             * render_mats::rot_x(orientation[0])
             * render_mats::rot_y(orientation[1])
             * render_mats::rot_z(orientation[2])
             * render_mats::translate(-loc[0], -loc[1], -loc[2]);
 
-        self.add_vert(Vec4::from_array([loc[0] + s[0], loc[1] + s[1], loc[2] + s[2], 1.0])); // 0
-        self.add_vert(Vec4::from_array([loc[0] + s[0], loc[1] + s[1], loc[2] - s[2], 1.0])); // 1
-        self.add_vert(Vec4::from_array([loc[0] + s[0], loc[1] - s[1], loc[2] + s[2], 1.0])); // 2
-        self.add_vert(Vec4::from_array([loc[0] + s[0], loc[1] - s[1], loc[2] - s[2], 1.0])); // 3
-        self.add_vert(Vec4::from_array([loc[0] - s[0], loc[1] + s[1], loc[2] + s[2], 1.0])); // 4
-        self.add_vert(Vec4::from_array([loc[0] - s[0], loc[1] + s[1], loc[2] - s[2], 1.0])); // 5
-        self.add_vert(Vec4::from_array([loc[0] - s[0], loc[1] - s[1], loc[2] + s[2], 1.0])); // 6
-        self.add_vert(Vec4::from_array([loc[0] - s[0], loc[1] - s[1], loc[2] - s[2], 1.0])); // 7
+        self.add_vert(v4([loc[0] + s[0], loc[1] + s[1], loc[2] + s[2], 1.0]), [0.0, 0.0]); // 0
+        self.add_vert(v4([loc[0] + s[0], loc[1] + s[1], loc[2] - s[2], 1.0]), [127.0, 0.0]); // 1
+        self.add_vert(v4([loc[0] + s[0], loc[1] - s[1], loc[2] + s[2], 1.0]), [0.0, 127.0]); // 2
+        self.add_vert(v4([loc[0] + s[0], loc[1] - s[1], loc[2] - s[2], 1.0]), [127.0, 127.0]); // 3
+        self.add_vert(v4([loc[0] - s[0], loc[1] + s[1], loc[2] + s[2], 1.0]), [127.0, 0.0]); // 4
+        self.add_vert(v4([loc[0] - s[0], loc[1] + s[1], loc[2] - s[2], 1.0]), [0.0, 127.0]); // 5
+        self.add_vert(v4([loc[0] - s[0], loc[1] - s[1], loc[2] + s[2], 1.0]), [127.0, 0.0]); // 6
+        self.add_vert(v4([loc[0] - s[0], loc[1] - s[1], loc[2] - s[2], 1.0]), [0.0, 0.0]); // 7
 
-        self.add_quad((6, [0.0, 0.0]), (2, [0.0, 127.0]), (0, [127.0, 127.0]), (4, [0.0, 127.0]), tex);
-        self.add_quad((7, [0.0, 0.0]), (5, [0.0, 127.0]), (1, [127.0, 127.0]), (3, [0.0, 127.0]), tex);
-        self.add_quad((7, [0.0, 0.0]), (6, [0.0, 127.0]), (4, [127.0, 127.0]), (5, [0.0, 127.0]), tex);
-        self.add_quad((3, [0.0, 0.0]), (1, [0.0, 127.0]), (0, [127.0, 127.0]), (2, [0.0, 127.0]), tex);
-        self.add_quad((7, [0.0, 0.0]), (3, [0.0, 127.0]), (2, [127.0, 127.0]), (6, [0.0, 127.0]), tex);
-        self.add_quad((5, [0.0, 0.0]), (4, [0.0, 127.0]), (0, [127.0, 127.0]), (1, [0.0, 127.0]), tex);
+        self.add_quad(6, 2, 0, 4);
+        self.add_quad(7, 5, 1, 3);
+        self.add_quad(7, 6, 4, 5);
+        self.add_quad(3, 1, 0, 2);
+        self.add_quad(7, 3, 2, 6);
+        self.add_quad(5, 4, 0, 1);
+
+        self.bind_tex(assets::TEXTURES.get("joemama").unwrap());
 
         self.draw_model(&rot);
     }
@@ -194,63 +204,69 @@ impl Renderer {
         let mut clip_tex: Vec<[f32; 2]> = Vec::with_capacity(4);
         model.mul_packed(&mut self.vertices);
         self.world_proj.mul_packed(&mut self.vertices);
-        for (tri, tex) in self.tris.iter_mut() {
+        for tri in self.tris.iter() {
             clip_points.clear();
             clip_tex.clear();
             // Use w coordinate to infer clip/no clip, as projection copies
             // z to w
-            let mut p_clips = [true; 3];
-            for (p, p_clip) in tri.iter().zip(p_clips.iter_mut()) {
-                *p_clip = self.vertices[p.0][3] >= NEAR;
+            let mut p_accepts = [true; 3];
+            for (p, p_clip) in tri.iter().zip(p_accepts.iter_mut()) {
+                *p_clip = self.vertices[*p][3] >= NEAR;
             }
-            if p_clips.iter().all(|x| !*x) {
+            if p_accepts.iter().all(|x| !*x) {
                 continue;
             }
-            if p_clips.iter().all(|x| *x) {
+            if p_accepts.iter().all(|x| *x) {
                 // No clipping needed
-                for (p, tex) in tri.iter() {
+                for p in tri.iter() {
                     clip_points.push(self.vertices[*p]);
-                    clip_tex.push(tex.clone());
+                    clip_tex.push(self.vertex_attrs[*p]);
                 }
             } else {
                 // Clipping
-                let first_valid = p_clips.iter().position(|x| *x).unwrap();
-                clip_points.push(self.vertices[tri[first_valid].0]);
-                clip_tex.push(tri[first_valid].1);
+                let first_valid = p_accepts.iter().position(|x| *x).unwrap();
+                clip_points.push(self.vertices[tri[first_valid]]);
+                clip_tex.push(self.vertex_attrs[tri[first_valid]]);
                 for i in 1..=3_isize {
                     let cei = (first_valid as isize + i).rem_euclid(3) as usize;
                     let lei = (first_valid as isize + i - 1).rem_euclid(3) as usize;
-                    let vertex = self.vertices[tri[cei].0];
-                    let crosses_near = p_clips[cei] != p_clips[lei];
+                    let crosses_near = p_accepts[cei] != p_accepts[lei];
                     if !crosses_near {
-                        if !p_clips[cei] {
+                        if !p_accepts[cei] {
                             // Two points behind near do not produce a new point
                             continue;
                         }
-                        clip_points.push(vertex);
-                        clip_tex.push(tri[cei].1);
+                        clip_points.push(self.vertices[tri[cei]]);
+                        clip_tex.push(self.vertex_attrs[tri[cei]]);
                         continue;
                     }
-                    let last_vertex = self.vertices[tri[lei].0];
-                    let (zc, zl) = (vertex[3], last_vertex[3]);
+
+                    let vertex = self.vertices[tri[cei]];
+                    let last_vertex = self.vertices[tri[lei]];
+                    let attrs = self.vertex_attrs[tri[cei]];
+                    let last_attrs = self.vertex_attrs[tri[lei]];
+
                     // No div by zero, as crosses_near => zc != zl
-                    let t = (NEAR - zl) / (zc - zl);
+                    let t = (NEAR - last_vertex[3]) / (vertex[3] - last_vertex[3]);
                     let p = last_vertex + (vertex - last_vertex) * t;
-                    let mut tex = tri[lei].1;
-                    for (tex, curr_tex) in tex.iter_mut().zip(tri[cei].1) {
-                        *tex = *tex * (1.0 - t) + t * curr_tex;
+                    let mut tex = last_attrs;
+                    for (tex, curr_tex) in tex.iter_mut().zip(attrs) {
+                        *tex = *tex + t * (curr_tex - *tex);
                     }
                     clip_points.push(p);
                     clip_tex.push(tex);
-                    if p_clips[cei] {
+                    if p_accepts[cei] {
                         clip_points.push(vertex);
-                        clip_tex.push(tri[cei].1);
+                        clip_tex.push(attrs);
                     }
                 }
             }
             clip_points.w_divide();
             self.viewport.mul_packed(&mut clip_points);
             let mut win = 1;
+            // Clipping a convex poly against near plane preserves convex-ness
+            // so a simple fan triangulation works
+            // May produce slivers, however
             while win + 1 < clip_points.n() {
                 let (pa, ta) = (&clip_points[0], &clip_tex[0]);
                 let (pb, tb) = (&clip_points[win], &clip_tex[win]);
@@ -259,39 +275,31 @@ impl Renderer {
                     [pa[0], pa[1], pa[2], ta[0], ta[1]],
                     [pb[0], pb[1], pb[2], tb[0], tb[1]],
                     [pc[0], pc[1], pc[2], tc[0], tc[1]],
-                    tex,
+                    self.bound_tex,
                 );
                 win += 1;
             }
         }
         self.clear_obj();
     }
-    pub fn add_vert(&mut self, vert: Vec4) -> usize {
-        self.vertices.push(vert);
+    pub fn add_vert(&mut self, p: Vec4, attr: [f32; 2]) -> usize {
+        self.vertices.push(p);
+        self.vertex_attrs.push(attr);
         self.vertices.n() - 1
     }
-    pub fn add_tri(
-        &mut self,
-        a: (usize, [f32; 2]),
-        b: (usize, [f32; 2]),
-        c: (usize, [f32; 2]),
-        tex: Tex,
-    ) {
-        self.tris.push(([a, b, c], tex));
+    pub fn add_tri(&mut self, a: usize, b: usize, c: usize) {
+        self.tris.push([a, b, c]);
     }
-    pub fn add_quad(
-        &mut self,
-        a: (usize, [f32; 2]),
-        b: (usize, [f32; 2]),
-        c: (usize, [f32; 2]),
-        d: (usize, [f32; 2]),
-        tex: Tex,
-    ) {
-        self.tris.push(([a, b, c], tex));
-        self.tris.push(([c, d, a], tex))
+    pub fn add_quad(&mut self, a: usize, b: usize, c: usize, d: usize) {
+        self.tris.push([a, b, c]);
+        self.tris.push([c, d, a])
+    }
+    pub fn bind_tex(&mut self, tex: Tex) {
+        self.bound_tex = tex;
     }
     pub fn clear_obj(&mut self) {
         self.vertices.clear();
         self.tris.clear();
+        self.vertex_attrs.clear();
     }
 }

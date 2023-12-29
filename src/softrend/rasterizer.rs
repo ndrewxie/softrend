@@ -117,7 +117,7 @@ impl Rasterizer {
     fn step_tile(
         &mut self,
         tl: (usize, usize),
-        mut br: (usize, usize),
+        br: (usize, usize),
         tsi: usize,
         mut draw_interps: f32x4,
         mut fill_interps: f32x4,
