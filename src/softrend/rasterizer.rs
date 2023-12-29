@@ -5,12 +5,9 @@ use std::simd::prelude::*;
 const TILE_SIZES: [usize; 4] = [4, 16, 32, 128];
 const N_TILE_SIZES: usize = TILE_SIZES.len() + 1; // 1x1 tiles
 
-#[repr(C, align(128))]
-struct MemAlign([u8; 128]);
-
 pub struct Rasterizer {
     pixels: &'static mut [u8],
-    z_buf: Vec<f32>,
+    z_buf: &'static mut [f32],
     pub width: usize,
     pub height: usize,
     real_dims: (usize, usize),
@@ -27,30 +24,39 @@ struct StepInfo {
     dy_fill: f32x4,
 }
 
+#[repr(C, align(128))]
+struct FbAlign([u8; 128]);
+#[repr(C, align(128))]
+struct ZAlign([f32; 32]);
+
 impl Rasterizer {
     pub fn new(width: usize, height: usize) -> Self {
         let width_aligned = width.next_multiple_of(*TILE_SIZES.last().unwrap());
         let height_aligned = height.next_multiple_of(*TILE_SIZES.last().unwrap());
-        let pixels = Self::alloc_framebuffer(width_aligned, height_aligned);
+        let pixels = Self::alloc_framebuffer::<FbAlign, u8>(
+            4 * width_aligned * height_aligned,
+            0,
+        );
+        let z_buf = Self::alloc_framebuffer::<ZAlign, f32>(
+            width_aligned * height_aligned,
+            0.0,
+        );
         Self {
             pixels,
-            z_buf: vec![0.0; width_aligned * height_aligned],
+            z_buf,
             width: width_aligned,
             height: height_aligned,
             real_dims: (width, height),
         }
     }
-    /// Allocates a framebuffer, aligned to the alignment of MemAlign
-    fn alloc_framebuffer(width: usize, height: usize) -> &'static mut [u8] {
-        let fb_size = 4 * width * height;
-        let fb = vec![0; fb_size + 4 * std::mem::size_of::<MemAlign>()];
-        let fb_slice: &'static mut [u8] = Vec::leak(fb);
+    /// Allocates a slice, aligned to the alignment of `Align` and filled with `fill`
+    /// Leaks memory, but as long as it isn't called repeatedly that's OK
+    fn alloc_framebuffer<Align, T: Copy>(size: usize, fill: T) -> &'static mut [T] {
+        let fb = vec![fill; size + 4 * std::mem::size_of::<Align>()];
+        let fb_slice: &'static mut [T] = Vec::leak(fb);
         unsafe {
-            let (_, aligned_fb, _) = fb_slice.align_to_mut::<MemAlign>();
-            std::slice::from_raw_parts_mut(
-                aligned_fb.as_mut_ptr() as *mut u8,
-                fb_size,
-            )
+            let (_, aligned_fb, _) = fb_slice.align_to_mut::<Align>();
+            std::slice::from_raw_parts_mut(aligned_fb.as_mut_ptr() as *mut T, size)
         }
     }
     pub fn copy_to_brga_u32<B>(&self, buffer: &mut B)
@@ -206,6 +212,17 @@ impl Rasterizer {
             return;
         }
 
+        let framebuffer = unsafe {
+            let pix_ptr = self.pixels.as_ptr() as *mut u32;
+            let pix_len = self.pixels.len() / 4;
+            std::slice::from_raw_parts_mut(pix_ptr, pix_len)
+        };
+        let texbuffer = unsafe {
+            let pix_ptr = texture.0.as_slice().as_ptr() as *mut u32;
+            let pix_len = texture.0.len() / 4;
+            std::slice::from_raw_parts(pix_ptr, pix_len)
+        };
+
         let step = &step_info[step_info.len() - 1];
         let offsets = f32x4::from_array([0.0, 1.0, 2.0, 3.0]);
         let mut rcp_z =
@@ -218,10 +235,15 @@ impl Rasterizer {
         let dtx_dy = step.dy_fill[0];
         let dty_dy = step.dy_fill[1];
 
-        let mut index = 4 * (tl.1 * self.width + tl.0);
-        let mut z_index = tl.1 * self.width + tl.0;
-        for _ in 0..4 {
-            let mut row_draw_interps =
+        let mut index = tl.1 * self.width + tl.0;
+        let z_indx = tl.1 * self.width + 4 * tl.0;
+        let z_block = unsafe { self.z_buf.get_unchecked_mut(z_indx..z_indx + 16) };
+        for z_buf_row in z_block.chunks_exact_mut(4) {
+            let pix_row = unsafe { framebuffer.get_unchecked_mut(index..index + 4) };
+            let pix_vec = u32x4::from_slice(pix_row);
+            let z_buf_vec = f32x4::from_slice(z_buf_row);
+
+            let mut row_draw =
                 if ACCEPTED { f32x4::splat(0.0) } else { draw_interps };
 
             let z = rcp_z.recip();
@@ -229,41 +251,38 @@ impl Rasterizer {
             let tex_max = f32x4::splat((assets::TEX_SIZE - 1) as f32);
             let persp_tx = (tx * z).simd_clamp(tex_min, tex_max);
             let persp_ty = (ty * z).simd_clamp(tex_min, tex_max);
-
             let int_tx = unsafe { persp_tx.to_int_unchecked::<i32>().cast::<u32>() };
             let int_ty = unsafe { persp_ty.to_int_unchecked::<i32>().cast::<u32>() };
-            let texcoords = u32x4::splat(4) * int_tx
-                + u32x4::splat(assets::TEX_SIZE as u32 * 4) * int_ty;
+            let texcoords = int_tx + u32x4::splat(assets::TEX_SIZE as u32) * int_ty;
+            let texcoords_usize = texcoords.cast::<usize>();
 
-            let pix_row =
-                unsafe { self.pixels.get_unchecked_mut(index..index + 16) };
-            let z_row =
-                unsafe { self.z_buf.get_unchecked_mut(z_index..z_index + 4) };
-            for (((tc, zv), pix), zix) in texcoords
-                .as_array()
-                .iter()
-                .zip(rcp_z.as_array())
-                .zip(pix_row.chunks_exact_mut(4))
-                .zip(z_row.iter_mut())
-            {
-                if ACCEPTED || row_draw_interps.simd_ge(f32x4::splat(0.0)).all() {
-                    if zv > zix {
-                        let ti = *tc as usize;
-                        let tex = unsafe { texture.0.get_unchecked(ti..ti + 4) };
-                        pix.copy_from_slice(tex);
-                        *zix = *zv;
+            let mut write_mask = rcp_z.simd_gt(z_buf_vec);
+            if !ACCEPTED {
+                let zero = f32x4::splat(0.0);
+                unsafe {
+                    for i in 0..4 {
+                        let write = write_mask.test_unchecked(i);
+                        write_mask
+                            .set_unchecked(i, write & row_draw.simd_ge(zero).all());
+                        row_draw += step.dx_draw;
                     }
                 }
-                if !ACCEPTED {
-                    row_draw_interps += step.dx_draw;
-                }
             }
+
+            write_mask.select(rcp_z, z_buf_vec).copy_to_slice(z_buf_row);
+
+            let mut new_pix_vec = u32x4::splat(0);
+            for (texel, tc) in
+                new_pix_vec.as_mut_array().iter_mut().zip(texcoords_usize.as_array())
+            {
+                *texel = unsafe { *texbuffer.get_unchecked(*tc) };
+            }
+            write_mask.select(new_pix_vec, pix_vec).copy_to_slice(pix_row);
 
             rcp_z += f32x4::splat(drcpz_dy);
             tx += f32x4::splat(dtx_dy);
             ty += f32x4::splat(dty_dy);
-            index += 4 * self.width;
-            z_index += self.width;
+            index += self.width;
             if !ACCEPTED {
                 draw_interps += step.dy_draw;
             }

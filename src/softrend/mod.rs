@@ -114,11 +114,14 @@ impl Renderer {
             }
         }
         fn draw_near_clip_test(rend: &mut Renderer, time: u128) {
+            let xr = 0.5 * std::f32::consts::PI * (time as f32 / 4500.0);
+            let zr = 0.5 * std::f32::consts::PI * (time as f32 / 4000.0);
+            let yr = 0.5 * std::f32::consts::PI * (time as f32 / 3500.0);
             for x in (-50..=50).step_by(10) {
                 for y in (-50..=50).step_by(10) {
                     rend.draw_cube(
-                        [x as f32, y as f32, 10.0],
-                        [0.0, 0.0, 0.0],
+                        [x as f32, y as f32, 20.0],
+                        [xr, yr, zr],
                         [5.0; 3],
                         assets::TEXTURES.get("checkerboard").unwrap(),
                     );
@@ -195,7 +198,7 @@ impl Renderer {
         self.add_quad(7, 3, 2, 6);
         self.add_quad(5, 4, 0, 1);
 
-        self.bind_tex(assets::TEXTURES.get("joemama").unwrap());
+        self.bind_tex(tex);
 
         self.draw_model(&rot);
     }
@@ -291,8 +294,8 @@ impl Renderer {
         self.tris.push([a, b, c]);
     }
     pub fn add_quad(&mut self, a: usize, b: usize, c: usize, d: usize) {
-        self.tris.push([a, b, c]);
-        self.tris.push([c, d, a])
+        self.add_tri(a, b, c);
+        self.add_tri(c, d, a);
     }
     pub fn bind_tex(&mut self, tex: Tex) {
         self.bound_tex = tex;
