@@ -123,7 +123,7 @@ impl Renderer {
                         [x as f32, y as f32, 20.0],
                         [xr, yr, zr],
                         [5.0; 3],
-                        assets::TEXTURES.get("checkerboard").unwrap(),
+                        assets::TEXTURES.get("joemama").unwrap(),
                     );
                 }
             }

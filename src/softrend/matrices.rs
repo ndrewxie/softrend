@@ -118,7 +118,7 @@ pub mod render_mats {
     }
     #[rustfmt::skip]
     pub fn proj(near: f32, far: f32, fov: f32) -> M4x4 {
-        let half_near_width = near as f32 * (fov * 0.5).tan();
+        let half_near_width = near * (fov * 0.5).tan();
         let inv_hnw = half_near_width.recip();
 
         let a = near * far / (far - near);

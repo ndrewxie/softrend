@@ -95,13 +95,15 @@ impl Rasterizer {
         let mut min_y = (min_f32(&ys) as usize).clamp(0, self.real_dims.1 - 1);
         let max_x = (max_f32(&xs).ceil() as usize).clamp(0, self.real_dims.0 - 1);
         let max_y = (max_f32(&ys).ceil() as usize).clamp(0, self.real_dims.1 - 1);
-        min_x = (min_x / TILE_SIZES[0]) * TILE_SIZES[0];
-        min_y = (min_y / TILE_SIZES[0]) * TILE_SIZES[0];
-
+        if min_x == max_x && min_y == max_y {
+            return;
+        }
         let outer_tile_indx = TILE_SIZES
             .iter()
             .position(|&x| 2 * x >= max_x - min_x && 2 * x >= max_y - min_y)
             .unwrap_or(TILE_SIZES.len() - 1);
+        min_x = (min_x / TILE_SIZES[outer_tile_indx]) * TILE_SIZES[outer_tile_indx];
+        min_y = (min_y / TILE_SIZES[outer_tile_indx]) * TILE_SIZES[outer_tile_indx];
 
         let top_left = (min_x as f32, min_y as f32);
         let Some((draw_interps, fill_interps, step_info)) =
@@ -206,11 +208,6 @@ impl Rasterizer {
         texture: &assets::Texture,
     ) {
         assert_eq!(TILE_SIZES[0], 4);
-        // Both start indices and window size are aligned to inner tile size,
-        // so this check suffices
-        if tl.0 + 4 >= self.real_dims.0 || tl.1 + 4 >= self.real_dims.1 {
-            return;
-        }
 
         let framebuffer = unsafe {
             let pix_ptr = self.pixels.as_ptr() as *mut u32;
