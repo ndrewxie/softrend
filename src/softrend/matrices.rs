@@ -21,6 +21,18 @@ impl Vec4 {
         let w = self[3];
         self.0.iter_mut().for_each(|x| *x /= w);
     }
+    pub fn x(&self) -> f32 {
+        self[0]
+    }
+    pub fn y(&self) -> f32 {
+        self[1]
+    }
+    pub fn z(&self) -> f32 {
+        self[2]
+    }
+    pub fn w(&self) -> f32 {
+        self[3]
+    }
 }
 impl M4x4 {
     pub fn new() -> Self {
@@ -33,12 +45,7 @@ impl M4x4 {
         for in_col in by.0.iter_mut() {
             let mut temp = [0.0; 4];
             for (i, coeff_row) in self.0.chunks_exact(4).enumerate() {
-                temp[i] = in_col
-                    .0
-                    .iter()
-                    .zip(coeff_row.iter())
-                    .map(|(&a, &b)| a * b)
-                    .sum();
+                temp[i] = in_col.0.iter().zip(coeff_row.iter()).map(|(&a, &b)| a * b).sum();
             }
             in_col.0.copy_from_slice(&temp);
         }
@@ -193,7 +200,7 @@ impl Mul<M4x4> for M4x4 {
         acc
     }
 }
-impl Mul<Vec4> for M4x4 {
+impl Mul<Vec4> for &M4x4 {
     type Output = Vec4;
     fn mul(self, by: Vec4) -> Vec4 {
         let mut acc = Vec4::new();
@@ -244,6 +251,11 @@ impl IndexMut<usize> for M4xn {
 impl fmt::Display for Vec4 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "<{:?}>", self.0)
+    }
+}
+impl fmt::Debug for Vec4 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
     }
 }
 impl fmt::Display for M4x4 {

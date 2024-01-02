@@ -20,8 +20,7 @@ fn main() {
     window.set_fullscreen(fullscreen);
 
     let context = unsafe { softbuffer::Context::new(&window).unwrap() };
-    let mut surface =
-        unsafe { softbuffer::Surface::new(&context, &window).unwrap() };
+    let mut surface = unsafe { softbuffer::Surface::new(&context, &window).unwrap() };
 
     let size = window.inner_size();
     let (Some(width), Some(height)) =
@@ -32,12 +31,8 @@ fn main() {
     surface.resize(width, height).unwrap();
 
     let game_start = Instant::now();
-    let mut renderer = softrend::Renderer::new(
-        size.width as usize,
-        size.height as usize,
-        0.001,
-        50.0,
-    );
+    let mut renderer =
+        softrend::Renderer::new(size.width as usize, size.height as usize, 0.001, 50.0);
 
     window.set_cursor_grab(CursorGrabMode::Confined).expect("Cannot grab cursor");
     window.set_cursor_visible(false);
@@ -48,10 +43,8 @@ fn main() {
     event_loop
         .run(move |event, elwt| {
             elwt.set_control_flow(ControlFlow::Wait);
-            if let Event::DeviceEvent {
-                event: DeviceEvent::MouseMotion { delta },
-                ..
-            } = &event
+            if let Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta }, .. } =
+                &event
             {
                 renderer.rot_cam(delta.0 as f32, delta.1 as f32);
             }
@@ -59,20 +52,14 @@ fn main() {
                 match event {
                     WindowEvent::CloseRequested => elwt.exit(),
                     WindowEvent::RedrawRequested => {
-                        let fps =
-                            1000.0 / (last_frame.elapsed().as_millis() as f32 + 1.0);
-                        renderer.move_cam(
-                            player_move_state.0 / fps,
-                            player_move_state.1 / fps,
-                        );
+                        let fps = 1000.0 / (last_frame.elapsed().as_millis() as f32 + 1.0);
+                        renderer
+                            .move_cam(player_move_state.0 / fps, player_move_state.1 / fps);
                         println!("fps: {}", fps);
                         last_frame = Instant::now();
 
-                        let mut buffer: softbuffer::Buffer<'_> =
-                            surface.buffer_mut().unwrap();
-                        renderer
-                            .draw_frame(game_start.elapsed().as_millis())
-                            .copy_to_brga_u32(&mut buffer);
+                        let mut buffer: softbuffer::Buffer<'_> = surface.buffer_mut().unwrap();
+                        renderer.draw_frame(game_start.elapsed().as_millis(), &mut buffer);
 
                         buffer.present().unwrap();
                         window.request_redraw();
@@ -90,20 +77,14 @@ fn main() {
                         let key_delta = key_map.get(&event.physical_key);
                         match (event.state, key_delta) {
                             (ElementState::Pressed, Some(delta)) => {
-                                if !*key_holds
-                                    .entry(event.physical_key)
-                                    .or_insert(false)
-                                {
+                                if !*key_holds.entry(event.physical_key).or_insert(false) {
                                     key_holds.insert(event.physical_key, true);
                                     player_move_state.0 += delta.0;
                                     player_move_state.1 += delta.1;
                                 }
                             }
                             (ElementState::Released, Some(delta)) => {
-                                if *key_holds
-                                    .entry(event.physical_key)
-                                    .or_insert(true)
-                                {
+                                if *key_holds.entry(event.physical_key).or_insert(true) {
                                     key_holds.insert(event.physical_key, false);
                                     player_move_state.0 -= delta.0;
                                     player_move_state.1 -= delta.1;

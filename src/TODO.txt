@@ -6,3 +6,6 @@
 * ONLY IF NEEDED: Scale [near, far] to [1, 0]. Currently, it is [1, near / far].
     Gives extra precision near the far plane
 * PROBABLY NOT NEEDED: Bilinear/linear texture mapping within 16x16 inner tile
+
+
+FIX WINDING ORDER REJECT
