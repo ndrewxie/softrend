@@ -138,7 +138,9 @@ pub mod render_mats {
         ])
     }
     pub fn proj_z_offset(near: f32, far: f32, _fov: f32) -> f32 {
-        near / (near - far)
+        let a = near * far / (far - near);
+        let b = near / (near - far);
+        b / a
     }
     #[rustfmt::skip]
     pub fn identity() -> M4x4 {

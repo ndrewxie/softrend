@@ -124,21 +124,6 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
             tri_data.interps,
         );
     }
-    fn debug_fill_tile(&self, tl: (usize, usize), br: (usize, usize), color: u32) {
-        let mut pixels = self.raster.pixels();
-        let width = self.raster.fb_dims().0;
-        let mut index = tl.1 * width + tl.0;
-        for _ in 0..(br.1 - tl.1) {
-            let mut row_index = index;
-            for _ in 0..(br.0 - tl.0) {
-                unsafe {
-                    *pixels.get_unchecked_mut(row_index) = color;
-                };
-                row_index += 1;
-            }
-            index += width;
-        }
-    }
     fn step_tile<const ACCEPTED: bool>(
         &self,
         tl: (usize, usize),
@@ -323,13 +308,9 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
             draw_dy[indx] = e_dy;
         }
 
-        let recip_z = [
-            [(points[0].z() - z_offset).recip()],
-            [(points[1].z() - z_offset).recip()],
-            [(points[2].z() - z_offset).recip()],
-        ];
+        let recip_z: [[f32; 1]; 3] = std::array::from_fn(|i| [points[i].z()]);
         for (rcp_z, pis) in recip_z.iter().zip(persp_interps.iter_mut()) {
-            pis.iter_mut().for_each(|x| *x *= rcp_z[0]);
+            pis.iter_mut().for_each(|x| *x *= rcp_z[0] - z_offset);
         }
 
         let (z_tl, z_dx, z_dy) =

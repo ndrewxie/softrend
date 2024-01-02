@@ -11,22 +11,29 @@ pub trait Shader<const FIP: usize, const FIA: usize>: std::fmt::Debug {
     type VertexIn: Clone + Send;
     /// Vertex shader. Takes in a `VertexIn` and outputs the transformed location
     /// and data of the vertex. Perspective divide should not be performed
-    /// on the transformed location: it should be left in homogenous coordinates,
+    /// on the transformed location: it should be left in clip space coordinates,
     /// and will be transformed into NDC coordinates following a perspective divide.
     /// NDC coordinate format:
     /// * -1 <= x <= 1
     /// * -1 <= y <= 1
     /// * 0 (far) <= z <= 1 (near)
-    /// * w: z coordinate in word coordinates
-    /// NOTE: If perspective correct interpolants are used, see Z_OFFSET
+    /// * w: z coordinate in world coordinates
+    /// NOTE: If perspective correct interpolants are used, see z_offset
     fn vert(&self, input: &Self::VertexIn) -> (Vec4, VertexData<FIP, FIA>);
+    /// Linearly interpolate the vertex data between `start` and `end`
+    /// 0 <= t <= 1
     fn vd_lerp(
         &self,
         start: &VertexData<FIP, FIA>,
         end: &VertexData<FIP, FIA>,
         t: f32,
     ) -> VertexData<FIP, FIA>;
+    /// Fragment shader. Inputs are perspective corrected interpolants (p_i)
+    /// and affinely interpolated interpolants (a_i)
+    /// Output should be a pixel color
     fn frag(&self, p_i: &[f32x4; FIP], a_i: &[f32x4; FIA]) -> u32x4;
+    /// Blend shader. Inputs are the fragment color (coming from fragment shader)
+    /// and the current framebuffer color. Output should be blended pixel color
     fn blend(&self, frag_color: u32x4, fb_color: u32x4) -> u32x4;
     /// If perspective correct interpolants are used, it is assumed that
     /// the z coord is transformed as z' = (a/z) + b (with the perspective

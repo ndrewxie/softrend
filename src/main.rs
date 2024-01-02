@@ -52,7 +52,7 @@ fn main() {
                 match event {
                     WindowEvent::CloseRequested => elwt.exit(),
                     WindowEvent::RedrawRequested => {
-                        let fps = 1000.0 / (last_frame.elapsed().as_millis() as f32 + 1.0);
+                        let fps = 1000.0 / (last_frame.elapsed().as_millis() as f32 + 0.01);
                         renderer
                             .move_cam(player_move_state.0 / fps, player_move_state.1 / fps);
                         println!("fps: {}", fps);

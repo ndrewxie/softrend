@@ -9,7 +9,7 @@ use softdraw::*;
 
 const NEAR: f32 = 1.5;
 const FAR: f32 = 128.0;
-const FOV: f32 = std::f32::consts::PI * 0.7;
+const FOV: f32 = std::f32::consts::PI * 0.5;
 
 type Tex = &'static assets::Texture;
 
@@ -120,21 +120,10 @@ impl Renderer {
             );
         }
 
-        //draw_near_clip_test(self, time);
-        let xr = 0.5 * std::f32::consts::PI * (time as f32 / 4500.0);
-        let zr = 0.5 * std::f32::consts::PI * (time as f32 / 4000.0);
-        let yr = 0.5 * std::f32::consts::PI * (time as f32 / 3500.0);
-        self.draw_cube(
-            [0.0, 0.0, 15.0],
-            [xr, yr, zr],
-            [5.0, 5.0, 5.0],
-            assets::TEXTURES.get("joemama").unwrap(),
-        );
+        draw_near_clip_test(self, time);
         self.raster.copy_to_brga_u32(buffer);
     }
     fn compute_camera(&mut self) {
-        let max_dim = 0.5 * std::cmp::max(self.window_dims.0, self.window_dims.1) as f32;
-
         let trans = render_mats::translate(-self.cam_loc.0, -self.cam_loc.1, -self.cam_loc.2);
         let cam_rot = self.compute_cam_rot();
         let proj = render_mats::proj(NEAR, FAR, FOV);
