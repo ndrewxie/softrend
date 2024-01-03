@@ -72,15 +72,15 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
         let ((mut min_x, mut min_y), (max_x, max_y)) =
             Self::tri_aabb(&points, raster.win_dims());
         let (bb_width, bb_height) = (max_x - min_x, max_y - min_y);
-        if bb_width == 0 && bb_height == 0 {
+        if bb_width == 0 || bb_height == 0 {
             return;
         }
 
         // Compute starting tile index
-        let start_tile = TILE_SIZES
-            .iter()
-            .position(|&x| 2 * x >= bb_width && 2 * x >= bb_height)
-            .unwrap_or(TILE_SIZES.len() - 1);
+        let start_tile = (0..TILE_SIZES.len())
+            .rev()
+            .find(|&ti| 2 * TILE_SIZES[ti] <= bb_width && 2 * TILE_SIZES[ti] <= bb_height)
+            .unwrap_or(0);
         let start_tile_size = TILE_SIZES[start_tile];
         // Align start coordinates to tile size
         min_x = (min_x / start_tile_size) * start_tile_size;
@@ -141,8 +141,8 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
             let mut row_interps = interps.clone();
             let mut row_draw = draw;
             while x < br.0 {
-                let accepts = cutoffs.accepts(row_draw);
-                let rejects = cutoffs.rejects(row_draw);
+                let accepts = ACCEPTED || cutoffs.accepts(row_draw);
+                let rejects = (!ACCEPTED) && cutoffs.rejects(row_draw);
                 macro_rules! tile {
                     (INNER, $x:expr) => {
                         self.fill_inner_tile::<$x>((x, y), row_draw, row_interps.clone())
