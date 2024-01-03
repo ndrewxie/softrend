@@ -1,2 +1,2 @@
 * MUST DO: Debug wonky camera move behavior
-* MUST DO: Convert edge functions to 27.4 fixed point, add guard band clipping
+* MUST DO: Convert edge functions to 27.4 fixed point

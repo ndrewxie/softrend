@@ -16,9 +16,7 @@ opt-level = 3
 panic = "abort"
 debug = true
 
-[profile.bench]
-opt-level = 3
-panic = "abort"
-debug = true
+[profile.release-lto]
+inherits = "release"
 codegen-units = 1
 lto = "thin"

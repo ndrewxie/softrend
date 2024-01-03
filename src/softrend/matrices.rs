@@ -24,6 +24,14 @@ impl Vec4 {
     pub fn dot(&self, other: &Self) -> f32 {
         self.0.iter().zip(&other.0).map(|(&l, &r)| l * r).sum()
     }
+    pub fn cross_3d(&self, other: &Self) -> Self {
+        Self::from_array([
+            self.y() * other.z() - self.z() * other.y(),
+            -self.x() * other.z() + self.z() * other.x(),
+            self.x() * other.y() - self.y() * other.x(),
+            1.0,
+        ])
+    }
     pub fn x(&self) -> f32 {
         self[0]
     }

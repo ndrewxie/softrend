@@ -40,11 +40,18 @@ impl Renderer {
         }
     }
     pub fn move_cam(&mut self, dx: f32, dz: f32) {
-        let forward = Vec4::from_array([dx, 0.0, dz, 1.0]) * self.move_sens;
-        let forward = &self.compute_cam_rot() * forward;
-        self.cam_loc.0 += forward[0];
-        self.cam_loc.1 += forward[1];
-        self.cam_loc.2 += forward[2];
+        let azu_rot = render_mats::rot_y(-self.cam_orient.0);
+        let alt_rot = render_mats::rot_x(-self.cam_orient.1);
+        let inv_cam_rot = azu_rot * alt_rot;
+
+        let mut forward = Vec4::from_array([0.0, 0.0, 1.0, 1.0]);
+        forward = &inv_cam_rot * forward;
+        let left = Vec4::from_array([0.0, 1.0, 0.0, 1.0]).cross_3d(&forward);
+
+        let delta = (left * dx + forward * dz) * self.move_sens;
+        self.cam_loc.0 += delta[0];
+        self.cam_loc.1 += delta[1];
+        self.cam_loc.2 += delta[2];
     }
     pub fn rot_cam(&mut self, dazu: f32, dinc: f32) {
         let inc_limit = std::f32::consts::PI * 0.5;
@@ -60,35 +67,13 @@ impl Renderer {
         self.raster.clear();
         self.compute_camera();
 
-        fn draw_z_test(rend: &mut Renderer, time: u128) {
-            let xr = 0.5 * std::f32::consts::PI * (time as f32 / 4500.0);
-            let zr = 0.5 * std::f32::consts::PI * (time as f32 / 4000.0);
-            let yr = 0.5 * std::f32::consts::PI * (time as f32 / 3500.0);
-            rend.draw_cube(
-                [0.0, 0.0, 200.0],
-                [0.0, 0.0, 0.0],
-                [100.0; 3],
-                assets::TEXTURES.get("joemama").unwrap(),
-            );
-            rend.draw_cube(
-                [0.0, 0.0, 30.0],
-                [xr, yr, zr],
-                [6.0; 3],
-                assets::TEXTURES.get("joemama").unwrap(),
-            );
-            rend.draw_cube(
-                [0.0, 0.0, 30.0],
-                [zr + 0.75, xr, yr + 2.75],
-                [6.0; 3],
-                assets::TEXTURES.get("checkerboard").unwrap(),
-            );
-        }
+        #[allow(dead_code)]
         fn draw_near_clip_test(rend: &mut Renderer, time: u128) {
             let xr = 0.5 * std::f32::consts::PI * (time as f32 / 4500.0);
             let zr = 0.5 * std::f32::consts::PI * (time as f32 / 4000.0);
             let yr = 0.5 * std::f32::consts::PI * (time as f32 / 3500.0);
-            for x in (-50..=50).step_by(10) {
-                for y in (-50..=50).step_by(10) {
+            for x in (-100..=100).step_by(10) {
+                for y in (-100..=100).step_by(10) {
                     rend.draw_cube(
                         [x as f32, y as f32, 20.0],
                         [xr, yr, zr],
@@ -98,7 +83,22 @@ impl Renderer {
                 }
             }
         }
-        fn draw_floor_test(rend: &mut Renderer, time: u128) {
+        #[allow(dead_code)]
+        fn draw_setup_stress_test(rend: &mut Renderer, _time: u128) {
+            let rot = std::f32::consts::PI * 0.25;
+            for x in (-100..=100).step_by(1) {
+                for y in (-100..=100).step_by(1) {
+                    rend.draw_cube(
+                        [x as f32 * 0.5, y as f32 * 0.5, 20.0],
+                        [rot, rot, rot],
+                        [0.5; 3],
+                        assets::TEXTURES.get("joemama").unwrap(),
+                    );
+                }
+            }
+        }
+        #[allow(dead_code)]
+        fn draw_floor_test(rend: &mut Renderer, _time: u128) {
             rend.draw_cube(
                 [0.0, -50.0, 0.0],
                 [0.0, 0.0, 0.0],
@@ -107,22 +107,20 @@ impl Renderer {
             );
         }
 
+        //draw_setup_stress_test(self, time);
         draw_near_clip_test(self, time);
         //draw_floor_test(self, time);
         self.raster.copy_to_brga_u32(buffer);
     }
     fn compute_camera(&mut self) {
         let trans = render_mats::translate(-self.cam_loc.0, -self.cam_loc.1, -self.cam_loc.2);
-        let cam_rot = self.compute_cam_rot();
+        let azu_rot = render_mats::rot_y(self.cam_orient.0);
+        let alt_rot = render_mats::rot_x(self.cam_orient.1);
+        let cam_rot = alt_rot * azu_rot;
         let proj = render_mats::proj(NEAR, FAR, FOV);
 
         self.camera = proj * cam_rot * trans;
         self.z_offset = render_mats::proj_z_offset(NEAR, FAR, FOV);
-    }
-    fn compute_cam_rot(&self) -> M4x4 {
-        let azu_rot = render_mats::rot_y(self.cam_orient.0);
-        let alt_rot = render_mats::rot_x(self.cam_orient.1);
-        alt_rot * azu_rot
     }
     #[rustfmt::skip]
     fn draw_cube(&self, loc: [f32; 3], orientation: [f32; 3], scale: [f32; 3], tex: Tex) {
