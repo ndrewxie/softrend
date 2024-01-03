@@ -4,6 +4,7 @@
 const GUARD_BAND_TOLERANCE: f32 = 1.5;
 
 use super::matrices::*;
+use smallvec::SmallVec;
 use std::simd::prelude::*;
 
 mod draw;
@@ -53,28 +54,26 @@ pub trait Shader<const FIP: usize, const FIA: usize>: std::fmt::Debug {
 
 pub struct Mesh<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> {
     vertices: Vec<S::VertexIn>,
-    tris: Vec<[usize; 3]>,
+    polys: Vec<SmallVec<[usize; 4]>>,
     shader: S,
 }
 
 impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> {
     pub fn new(shader: S) -> Self {
-        Self { vertices: Vec::with_capacity(128), tris: Vec::with_capacity(32), shader }
+        Self { vertices: Vec::with_capacity(128), polys: Vec::with_capacity(32), shader }
     }
     pub fn add_vertices(&mut self, vertices: impl IntoIterator<Item = S::VertexIn>) {
         self.vertices.extend(vertices);
     }
     pub fn add_tris(&mut self, tris: impl IntoIterator<Item = [usize; 3]>) {
-        self.tris.extend(tris);
+        self.polys.extend(tris.into_iter().map(|x| SmallVec::from_slice(&x)));
     }
     pub fn add_quads(&mut self, quads: impl IntoIterator<Item = [usize; 4]>) {
-        for quad in quads {
-            self.add_tris([[quad[0], quad[1], quad[2]], [quad[2], quad[3], quad[0]]])
-        }
+        self.polys.extend(quads.into_iter().map(|x| SmallVec::from_slice(&x)));
     }
     pub fn clear(&mut self) {
         self.vertices.clear();
-        self.tris.clear();
+        self.polys.clear();
     }
     pub fn draw(&self, raster: &Raster) {
         let (mut vertex_coords, mut vertex_attrs) = (Vec::new(), Vec::new());
@@ -88,14 +87,14 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
         }
 
         // Draw triangles with near clipping
-        let mut clip_points: Vec<Vec4> = Vec::with_capacity(4);
-        let mut clip_attrs: Vec<VertexData<FIP, FIA>> = Vec::with_capacity(4);
-        let mut clip_accepts: Vec<bool> = Vec::with_capacity(4);
-        for tri in self.tris.iter() {
+        let mut clip_points: SmallVec<[Vec4; 4]> = SmallVec::with_capacity(4);
+        let mut clip_attrs: SmallVec<[VertexData<FIP, FIA>; 4]> = SmallVec::with_capacity(4);
+        let mut clip_accepts: SmallVec<[bool; 4]> = SmallVec::with_capacity(4);
+        for poly in self.polys.iter() {
             clip_points.clear();
             clip_attrs.clear();
 
-            for &p_indx in tri {
+            for &p_indx in poly {
                 clip_points.push(vertex_coords[p_indx]);
                 clip_attrs.push(vertex_attrs[p_indx]);
             }
@@ -145,9 +144,9 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
     /// a homogenous normal specified by `normal`
     fn clip_poly(
         &self,
-        points: &mut Vec<Vec4>,
-        attrs: &mut Vec<VertexData<FIP, FIA>>,
-        accepts: &mut Vec<bool>,
+        points: &mut SmallVec<[Vec4; 4]>,
+        attrs: &mut SmallVec<[VertexData<FIP, FIA>; 4]>,
+        accepts: &mut SmallVec<[bool; 4]>,
         normal: Vec4,
     ) {
         accepts.clear();
