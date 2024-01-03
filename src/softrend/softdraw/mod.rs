@@ -1,4 +1,8 @@
 #![allow(dead_code)]
+
+// In NDC coords, clip when |{x, y}| >= GUARD_BAND_TOLERANCE
+const GUARD_BAND_TOLERANCE: f32 = 1.5;
+
 use super::matrices::*;
 use std::simd::prelude::*;
 
@@ -9,16 +13,20 @@ use draw::*;
 pub type VertexData<const FIP: usize, const FIA: usize> = ([f32; FIP], [f32; FIA]);
 pub trait Shader<const FIP: usize, const FIA: usize>: std::fmt::Debug {
     type VertexIn: Clone + Send;
-    /// Vertex shader. Takes in a `VertexIn` and outputs the transformed location
-    /// and data of the vertex. Perspective divide should not be performed
-    /// on the transformed location: it should be left in clip space coordinates,
-    /// and will be transformed into NDC coordinates following a perspective divide.
+    /// The vertex shader.
+    /// Input: Vertex data
+    /// Output: Vertex location in clip space coordinates, and fragment
+    ///         interpolant values (perspective and affine) at the vertex
+    /// Clip space coordinates are the coordinates right before the perspective
+    /// divide, which will then convert clip space coordinates into NDC coordinates.
+    /// Do not perform the perspective divide, the renderer will handle it.
     /// NDC coordinate format:
-    /// * -1 <= x <= 1
-    /// * -1 <= y <= 1
-    /// * 0 (far) <= z <= 1 (near)
-    /// * w: z coordinate in world coordinates
-    /// NOTE: If perspective correct interpolants are used, see z_offset
+    ///     * -1 <= x <= 1
+    ///     * -1 <= y <= 1
+    ///     * 0 (far) <= z <= 1 (near)
+    ///     * w: Original z coordinate, in world coordinates
+    ///     NOTE: If perspective correct interpolants are used, the z'(z) function
+    ///     is assumed to be affine. See z_offset.
     fn vert(&self, input: &Self::VertexIn) -> (Vec4, VertexData<FIP, FIA>);
     /// Linearly interpolate the vertex data between `start` and `end`
     /// 0 <= t <= 1
@@ -69,7 +77,6 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
         self.tris.clear();
     }
     pub fn draw(&self, raster: &Raster) {
-        let near = raster.near();
         let (mut vertex_coords, mut vertex_attrs) = (Vec::new(), Vec::new());
         vertex_coords.reserve_exact(self.vertices.len());
         vertex_attrs.reserve_exact(self.vertices.len());
@@ -81,65 +88,28 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
         }
 
         // Draw triangles with near clipping
-        // TODO: If Raster is migrated to fixed point, add guard band clipping
         let mut clip_points: Vec<Vec4> = Vec::with_capacity(4);
         let mut clip_attrs: Vec<VertexData<FIP, FIA>> = Vec::with_capacity(4);
+        let mut clip_accepts: Vec<bool> = Vec::with_capacity(4);
         for tri in self.tris.iter() {
             clip_points.clear();
             clip_attrs.clear();
 
-            let mut p_accepts = [true; 3];
-            for (&p, p_c) in tri.iter().zip(p_accepts.iter_mut()) {
-                *p_c = vertex_coords[p].w() >= near;
+            for &p_indx in tri {
+                clip_points.push(vertex_coords[p_indx]);
+                clip_attrs.push(vertex_attrs[p_indx]);
             }
-            if p_accepts.iter().all(|&x| !x) {
-                // All Z-rejected
-                continue;
-            }
-            if p_accepts.iter().all(|&x| x) {
-                // None Z-rejected
-                for &p in tri.iter() {
-                    clip_points.push(vertex_coords[p]);
-                    clip_attrs.push(vertex_attrs[p]);
-                }
-            } else {
-                // Some Z-rejected
-                let first_valid = p_accepts.iter().position(|&x| x).unwrap();
-                clip_points.push(vertex_coords[tri[first_valid]]);
-                clip_attrs.push(vertex_attrs[tri[first_valid]]);
-                for i in 1..=3_isize {
-                    // Current element index
-                    let cei = (first_valid as isize + i).rem_euclid(3) as usize;
-                    // Last element index
-                    let lei = (first_valid as isize + i - 1).rem_euclid(3) as usize;
-                    // If cei => lei crosses the near clipping plane
-                    let crosses_near = p_accepts[cei] != p_accepts[lei];
-                    if !crosses_near {
-                        if !p_accepts[cei] {
-                            // Two points behind near do not produce a new point
-                            continue;
-                        }
-                        clip_points.push(vertex_coords[tri[cei]]);
-                        clip_attrs.push(vertex_attrs[tri[cei]]);
-                        continue;
-                    }
-
-                    let vertex = vertex_coords[tri[cei]];
-                    let last_vertex = vertex_coords[tri[lei]];
-                    let attrs = &vertex_attrs[tri[cei]];
-                    let last_attrs = &vertex_attrs[tri[lei]];
-
-                    // No div by zero, as crosses_near => zc != zl
-                    let t = (near - last_vertex.w()) / (vertex.w() - last_vertex.w());
-                    let clip_vert = last_vertex + (vertex - last_vertex) * t;
-                    let clip_attr = self.shader.vd_lerp(last_attrs, attrs, t);
-                    clip_points.push(clip_vert);
-                    clip_attrs.push(clip_attr);
-                    if p_accepts[cei] {
-                        clip_points.push(vertex);
-                        clip_attrs.push(*attrs);
-                    }
-                }
+            #[rustfmt::skip]
+            let normals = [
+                Vec4::from_array([0.0,  0.0,  -1.0, 1.0]), // Near plane
+                Vec4::from_array([0.0,  0.0,  1.0,  0.0]), // Far plane
+                Vec4::from_array([1.0,  0.0,  0.0,  GUARD_BAND_TOLERANCE]), // Min-x plane
+                Vec4::from_array([-1.0, 0.0,  0.0,  GUARD_BAND_TOLERANCE]), // Max-x plane
+                Vec4::from_array([0.0,  1.0,  0.0,  GUARD_BAND_TOLERANCE]), // Min-y plane
+                Vec4::from_array([0.0,  -1.0, 0.0,  GUARD_BAND_TOLERANCE]), // Max-y plane
+            ];
+            for normal in normals {
+                self.clip_poly(&mut clip_points, &mut clip_attrs, &mut clip_accepts, normal);
             }
 
             let (raster_x, raster_y) = raster.tl();
@@ -168,6 +138,67 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
                     [ta.1, tc.1, tb.1],
                 );
                 win += 1;
+            }
+        }
+    }
+    /// Clips a convex polygon in homogenous coordinates, against a plane with
+    /// a homogenous normal specified by `normal`
+    fn clip_poly(
+        &self,
+        points: &mut Vec<Vec4>,
+        attrs: &mut Vec<VertexData<FIP, FIA>>,
+        accepts: &mut Vec<bool>,
+        normal: Vec4,
+    ) {
+        accepts.clear();
+        points.iter().for_each(|p| accepts.push(p.dot(&normal) >= 0.0));
+        if accepts.iter().all(|&x| x) {
+            // No clipping needed
+            return;
+        }
+        if accepts.iter().all(|&x| !x) {
+            // Entirely culled
+            points.clear();
+            attrs.clear();
+            return;
+        }
+        let first_valid = accepts.iter().position(|&x| x).unwrap();
+
+        let mut index = first_valid;
+        let mut counter = 0;
+        let num_iters = points.len();
+        while counter < num_iters {
+            counter += 1;
+            let cei = index % points.len();
+            let nei = (index + 1) % points.len();
+            if accepts[cei] && accepts[nei] {
+                index += 1;
+                continue;
+            }
+            if !accepts[cei] && !accepts[nei] {
+                points.remove(cei);
+                attrs.remove(cei);
+                accepts.remove(cei);
+                continue;
+            }
+
+            let t = points[cei].dot(&normal) / (points[cei] - points[nei]).dot(&normal);
+            let p_inter = points[cei] + (points[nei] - points[cei]) * t;
+            let a_inter = self.shader.vd_lerp(&attrs[cei], &attrs[nei], t);
+
+            if accepts[cei] && !accepts[nei] {
+                points.insert(nei, p_inter);
+                attrs.insert(nei, a_inter);
+                accepts.insert(nei, true);
+                index = nei + 1;
+                continue;
+            }
+            if !accepts[cei] && accepts[nei] {
+                points[cei] = p_inter;
+                attrs[cei] = a_inter;
+                accepts[cei] = true;
+                index += 1;
+                continue;
             }
         }
     }

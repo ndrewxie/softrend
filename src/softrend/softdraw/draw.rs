@@ -13,7 +13,6 @@ pub struct Raster {
     fb_dims: (usize, usize),
     screen_dims: (usize, usize),
     raster_tl: (usize, usize),
-    near: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -97,7 +96,7 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
         );
 
         let aux = Self {
-            raster: raster,
+            raster,
             shader,
             dx: std::array::from_fn(|i| {
                 let mut dx = tri_data.dx.clone();
@@ -333,7 +332,7 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
 }
 
 impl Raster {
-    pub fn new(raster_tl: (usize, usize), screen_dims: (usize, usize), near: f32) -> Self {
+    pub fn new(raster_tl: (usize, usize), screen_dims: (usize, usize)) -> Self {
         #[repr(C, align(128))]
         struct FbAlign([u32; 32]);
         #[repr(C, align(128))]
@@ -351,7 +350,6 @@ impl Raster {
             screen_dims,
             fb_dims: (width_aligned, height_aligned),
             raster_tl,
-            near,
         }
     }
     /// Allocates a slice, aligned to the alignment of `Align` and filled with `fill`.
@@ -378,9 +376,6 @@ impl Raster {
     }
     pub fn z_buf(&self) -> RefMut<&'static mut [f32]> {
         self.z_buf.borrow_mut()
-    }
-    pub fn near(&self) -> f32 {
-        self.near
     }
     pub fn clear(&self) {
         self.pixels().fill(0);

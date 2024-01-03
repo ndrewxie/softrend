@@ -21,6 +21,9 @@ impl Vec4 {
         let w = self[3];
         self.0.iter_mut().for_each(|x| *x /= w);
     }
+    pub fn dot(&self, other: &Self) -> f32 {
+        self.0.iter().zip(&other.0).map(|(&l, &r)| l * r).sum()
+    }
     pub fn x(&self) -> f32 {
         self[0]
     }
@@ -164,13 +167,6 @@ impl Sub<Vec4> for Vec4 {
     type Output = Vec4;
     fn sub(mut self, by: Vec4) -> Vec4 {
         self.0.iter_mut().zip(&by.0).for_each(|(x, b)| *x -= b);
-        self
-    }
-}
-impl Mul<Vec4> for Vec4 {
-    type Output = Vec4;
-    fn mul(mut self, by: Vec4) -> Vec4 {
-        self.0.iter_mut().zip(&by.0).for_each(|(x, b)| *x *= b);
         self
     }
 }

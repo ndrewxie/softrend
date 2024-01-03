@@ -1,11 +1,2 @@
 * MUST DO: Debug wonky camera move behavior
-* DO SOON: Directly pass 4x1 SIMD vec for tx, ty, z into inner fill tile, instead
-    of reconstructing from fill_interps and draw_interps
-
-* MAYBE NEEDED: Hierarchial z-buffer
-* ONLY IF NEEDED: Scale [near, far] to [1, 0]. Currently, it is [1, near / far].
-    Gives extra precision near the far plane
-* PROBABLY NOT NEEDED: Bilinear/linear texture mapping within 16x16 inner tile
-
-
-FIX WINDING ORDER REJECT
+* MUST DO: Convert edge functions to 27.4 fixed point, add guard band clipping

@@ -15,17 +15,10 @@ type Tex = &'static assets::Texture;
 
 pub struct Renderer {
     raster: Raster,
-    /// Window dimensions (width, height)
-    window_dims: (usize, usize),
     /// (x, y, z) camera location in world coordinates
     cam_loc: (f32, f32, f32),
     /// (rotation, inclination) camera orientation
     cam_orient: (f32, f32),
-
-    vertices: M4xn,
-    vertex_attrs: Vec<[f32; 2]>,
-    tris: Vec<[usize; 3]>,
-    bound_tex: Tex,
 
     camera: M4x4,
     z_offset: f32,
@@ -36,15 +29,9 @@ pub struct Renderer {
 impl Renderer {
     pub fn new(width: usize, height: usize, mouse_sens: f32, move_sens: f32) -> Self {
         Self {
-            raster: Raster::new((0, 0), (width, height), NEAR),
-            window_dims: (width, height),
+            raster: Raster::new((0, 0), (width, height)),
             cam_loc: (0.0, 0.0, 0.0),
             cam_orient: (0.0, 0.0),
-
-            vertices: M4xn::with_capacity(128),
-            tris: Vec::with_capacity(64),
-            vertex_attrs: Vec::with_capacity(64),
-            bound_tex: assets::TEXTURES.get("white").unwrap(),
 
             camera: M4x4::new(),
             z_offset: 0.0,
@@ -113,14 +100,15 @@ impl Renderer {
         }
         fn draw_floor_test(rend: &mut Renderer, time: u128) {
             rend.draw_cube(
-                [0.0, -100.0, 0.0],
+                [0.0, -50.0, 0.0],
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 1000.0],
-                assets::TEXTURES.get("joemama").unwrap(),
+                assets::TEXTURES.get("amogus").unwrap(),
             );
         }
 
         draw_near_clip_test(self, time);
+        //draw_floor_test(self, time);
         self.raster.copy_to_brga_u32(buffer);
     }
     fn compute_camera(&mut self) {
