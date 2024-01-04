@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+const SMALL_MODEL_SIZE: usize = 32;
 // In NDC coords, clip when |{x, y}| >= GUARD_BAND_TOLERANCE
 const GUARD_BAND_TOLERANCE: f32 = 1.5;
 
@@ -53,14 +54,14 @@ pub trait Shader<const FIP: usize, const FIA: usize>: std::fmt::Debug {
 }
 
 pub struct Mesh<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> {
-    vertices: Vec<S::VertexIn>,
-    polys: Vec<SmallVec<[usize; 4]>>,
+    vertices: SmallVec<[S::VertexIn; SMALL_MODEL_SIZE]>,
+    polys: SmallVec<[SmallVec<[usize; 4]>; SMALL_MODEL_SIZE]>,
     shader: S,
 }
 
 impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> {
     pub fn new(shader: S) -> Self {
-        Self { vertices: Vec::with_capacity(128), polys: Vec::with_capacity(32), shader }
+        Self { vertices: SmallVec::new(), polys: SmallVec::new(), shader }
     }
     pub fn add_vertices(&mut self, vertices: impl IntoIterator<Item = S::VertexIn>) {
         self.vertices.extend(vertices);
@@ -76,27 +77,27 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
         self.polys.clear();
     }
     pub fn draw(&self, raster: &Raster) {
-        let (mut vertex_coords, mut vertex_attrs) = (Vec::new(), Vec::new());
-        vertex_coords.reserve_exact(self.vertices.len());
-        vertex_attrs.reserve_exact(self.vertices.len());
-
+        let mut vertex_coords: SmallVec<[_; SMALL_MODEL_SIZE]> = SmallVec::new();
+        let mut vertex_attrs: SmallVec<[_; SMALL_MODEL_SIZE]> = SmallVec::new();
+        if self.vertices.len() > SMALL_MODEL_SIZE {
+            vertex_coords.reserve_exact(SMALL_MODEL_SIZE - self.vertices.len());
+            vertex_attrs.reserve_exact(SMALL_MODEL_SIZE - self.vertices.len());
+        }
         for vert in self.vertices.iter() {
             let (loc, attr) = self.shader.vert(vert);
             vertex_coords.push(loc);
             vertex_attrs.push(attr);
         }
 
-        // Draw triangles with near clipping
-        let mut clip_points: SmallVec<[Vec4; 4]> = SmallVec::with_capacity(4);
-        let mut clip_attrs: SmallVec<[VertexData<FIP, FIA>; 4]> = SmallVec::with_capacity(4);
-        let mut clip_accepts: SmallVec<[bool; 4]> = SmallVec::with_capacity(4);
+        let mut clip_points = [Vec4::from_array([0.0; 4]); 32];
+        let mut clip_attrs = [([0.0; FIP], [0.0; FIA]); 32];
+        let mut clip_accepts = [false; 32];
+        let mut num_points;
         for poly in self.polys.iter() {
-            clip_points.clear();
-            clip_attrs.clear();
-
-            for &p_indx in poly {
-                clip_points.push(vertex_coords[p_indx]);
-                clip_attrs.push(vertex_attrs[p_indx]);
+            num_points = poly.len();
+            for indx in 0..num_points {
+                clip_points[indx] = vertex_coords[poly[indx]];
+                clip_attrs[indx] = vertex_attrs[poly[indx]];
             }
             #[rustfmt::skip]
             let normals = [
@@ -108,14 +109,20 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
                 Vec4::from_array([0.0,  -1.0, 0.0,  GUARD_BAND_TOLERANCE]), // Max-y plane
             ];
             for normal in normals {
-                self.clip_poly(&mut clip_points, &mut clip_attrs, &mut clip_accepts, normal);
+                self.clip_poly(
+                    &mut clip_points,
+                    &mut clip_attrs,
+                    &mut clip_accepts,
+                    &mut num_points,
+                    normal,
+                );
             }
 
             let (raster_x, raster_y) = raster.tl();
             let (width, height) = raster.win_dims();
             let (halfwidth, halfheight) = (0.5 * width as f32, 0.5 * height as f32);
             let max_dim = halfwidth.max(halfheight);
-            for p in clip_points.iter_mut() {
+            for p in clip_points.iter_mut().take(num_points) {
                 p.w_div();
                 p[0] = p[0] * max_dim + halfwidth - raster_x as f32;
                 p[1] = -p[1] * max_dim + halfheight - raster_y as f32;
@@ -125,7 +132,7 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
             // Clipping a convex poly against near plane preserves convexity
             // so a simple fan triangulation works
             // May produce slivers, however
-            while win + 1 < clip_points.len() {
+            while win + 1 < num_points {
                 let (pa, ta) = (clip_points[0], &clip_attrs[0]);
                 let (pb, tb) = (clip_points[win], &clip_attrs[win]);
                 let (pc, tc) = (clip_points[win + 1], &clip_attrs[win + 1]);
@@ -142,42 +149,56 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
     }
     /// Clips a convex polygon in homogenous coordinates, against a plane with
     /// a homogenous normal specified by `normal`
-    fn clip_poly(
+    fn clip_poly<const N: usize>(
         &self,
-        points: &mut SmallVec<[Vec4; 4]>,
-        attrs: &mut SmallVec<[VertexData<FIP, FIA>; 4]>,
-        accepts: &mut SmallVec<[bool; 4]>,
+        points: &mut [Vec4; N],
+        attrs: &mut [VertexData<FIP, FIA>; N],
+        accepts: &mut [bool; N],
+        num_points: &mut usize,
         normal: Vec4,
     ) {
-        accepts.clear();
-        points.iter().for_each(|p| accepts.push(p.dot(&normal) >= 0.0));
-        if accepts.iter().all(|&x| x) {
+        fn insert<T: Copy>(arr: &mut [T], len: usize, val: T, at: usize) {
+            for indx in (at..len).rev() {
+                arr[indx + 1] = arr[indx];
+            }
+            arr[at] = val;
+        }
+        fn remove<T: Copy>(arr: &mut [T], len: usize, at: usize) {
+            for indx in at..(len - 1) {
+                arr[indx] = arr[indx + 1];
+            }
+        }
+
+        for i in 0..*num_points {
+            accepts[i] = points[i].dot(&normal) >= 0.0;
+        }
+        if accepts.iter().take(*num_points).all(|&x| x) {
             // No clipping needed
             return;
         }
-        if accepts.iter().all(|&x| !x) {
+        if accepts.iter().take(*num_points).all(|&x| !x) {
             // Entirely culled
-            points.clear();
-            attrs.clear();
+            *num_points = 0;
             return;
         }
         let first_valid = accepts.iter().position(|&x| x).unwrap();
 
         let mut index = first_valid;
         let mut counter = 0;
-        let num_iters = points.len();
+        let num_iters = *num_points;
         while counter < num_iters {
             counter += 1;
-            let cei = index % points.len();
-            let nei = (index + 1) % points.len();
+            let cei = index % *num_points;
+            let nei = (index + 1) % *num_points;
             if accepts[cei] && accepts[nei] {
                 index += 1;
                 continue;
             }
             if !accepts[cei] && !accepts[nei] {
-                points.remove(cei);
-                attrs.remove(cei);
-                accepts.remove(cei);
+                remove(points, *num_points, cei);
+                remove(attrs, *num_points, cei);
+                remove(accepts, *num_points, cei);
+                *num_points -= 1;
                 continue;
             }
 
@@ -186,9 +207,10 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
             let a_inter = self.shader.vd_lerp(&attrs[cei], &attrs[nei], t);
 
             if accepts[cei] && !accepts[nei] {
-                points.insert(nei, p_inter);
-                attrs.insert(nei, a_inter);
-                accepts.insert(nei, true);
+                insert(points, *num_points, p_inter, nei);
+                insert(attrs, *num_points, a_inter, nei);
+                insert(accepts, *num_points, true, nei);
+                *num_points += 1;
                 index = nei + 1;
                 continue;
             }
