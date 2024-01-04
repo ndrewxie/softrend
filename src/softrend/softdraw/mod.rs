@@ -94,6 +94,15 @@ impl<S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> Mesh<S, FIP, FIA> 
         let mut clip_accepts = [false; 32];
         let mut num_points;
         for poly in self.polys.iter() {
+            if poly.len() < 3 {
+                continue;
+            }
+            let ab = vertex_coords[poly[1]] - vertex_coords[poly[0]];
+            let ac = vertex_coords[poly[poly.len() - 1]] - vertex_coords[poly[0]];
+            if ac.cross_3d(&ab).z() <= 0.0 {
+                continue;
+            }
+
             num_points = poly.len();
             for indx in 0..num_points {
                 clip_points[indx] = vertex_coords[poly[indx]];

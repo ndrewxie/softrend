@@ -86,10 +86,10 @@ impl Renderer {
         #[allow(dead_code)]
         fn draw_setup_stress_test(rend: &mut Renderer, _time: u128) {
             let rot = std::f32::consts::PI * 0.25;
-            for x in (-100..=100).step_by(1) {
-                for y in (-100..=100).step_by(1) {
+            for x in (-50..=50).step_by(1) {
+                for y in (-50..=50).step_by(1) {
                     rend.draw_cube(
-                        [x as f32 * 0.5, y as f32 * 0.5, 20.0],
+                        [x as f32 * 0.5, y as f32 * 0.5, 10.0],
                         [rot, rot, rot],
                         [0.5; 3],
                         assets::TEXTURES.get("joemama").unwrap(),

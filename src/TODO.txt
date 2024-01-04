@@ -1,2 +1,6 @@
-* MUST DO: Debug wonky camera move behavior
-* MUST DO: Convert edge functions to 27.4 fixed point
+* Rasterizer should be OK
+* Design interface for softrend
+    * Texture upload/bind
+    * Specifying + inputting models
+    * Shaders: Dynamic loading or hardcoding?
+    * WASM integration?
