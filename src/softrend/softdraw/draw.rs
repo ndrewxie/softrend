@@ -4,6 +4,9 @@ use std::simd::prelude::*;
 use super::Shader;
 use super::Vec4;
 
+mod fixedpoint;
+use fixedpoint::*;
+
 const TILE_SIZES: [usize; 2] = [4, 32];
 const N_TILE_SIZES: usize = TILE_SIZES.len() + 1; // 1x1 tiles
 
@@ -17,19 +20,19 @@ pub struct Raster {
 
 #[derive(Clone, Debug)]
 pub struct StepDelta<const FIP: usize, const FIA: usize> {
-    draw: f32x4,
+    draw: Fx28_4x4,
     z: f32,
     persp: [f32; FIP],
     affine: [f32; FIA],
 }
 #[derive(Clone, Debug)]
 struct DrawCutoffs {
-    accept: f32x4,
-    reject: f32x4,
+    accept: Fx28_4x4,
+    reject: Fx28_4x4,
 }
 #[derive(Debug)]
 struct SetupData<const FIP: usize, const FIA: usize> {
-    draw_tl: f32x4,
+    draw_tl: Fx28_4x4,
     interps: Interps<FIP, FIA>,
     dx: StepDelta<FIP, FIA>,
     dy: StepDelta<FIP, FIA>,
@@ -128,7 +131,7 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
         tl: (usize, usize),
         br: (usize, usize),
         tsi: usize,
-        mut draw: f32x4,
+        mut draw: Fx28_4x4,
         mut interps: Interps<FIP, FIA>,
     ) {
         let ts = TILE_SIZES[tsi];
@@ -177,7 +180,7 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
     fn fill_inner_tile<const ACCEPTED: bool>(
         &self,
         tl: (usize, usize),
-        mut draw_interps: f32x4,
+        mut draw_interps: Fx28_4x4,
         mut fill_interps: Interps<FIP, FIA>,
     ) {
         let raster = self.raster;
@@ -204,9 +207,9 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
             let mut write_mask = fill_interps.z.simd_gt(z_buf_vec);
             (!ACCEPTED).then(|| unsafe {
                 let mut draw_mask = mask32x4::splat(false);
-                let zero = f32x4::splat(0.0);
+                let zero = Fx28_4x4::splat_float(0.0);
                 for i in 0..4 {
-                    draw_mask.set_unchecked(i, row_draw.simd_ge(zero).all());
+                    draw_mask.set_unchecked(i, row_draw.ge(zero).all());
                     row_draw += dx.draw;
                 }
                 write_mask &= draw_mask;
@@ -276,12 +279,11 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
         }
 
         let recip_tri_area = tri_area.recip();
+        let fxzero = Fx28_4::from_float(0.0);
+        let fxszero = Fx28_4x4::splat_float(0.0);
 
-        let mut draw_tl = f32x4::splat(0.0);
-        let mut draw_dx = f32x4::splat(0.0);
-        let mut draw_dy = f32x4::splat(0.0);
-        let mut accept = f32x4::splat(0.0);
-        let mut reject = f32x4::splat(0.0);
+        let (mut draw_tl, mut draw_dx, mut draw_dy) = (fxszero, fxszero, fxszero);
+        let (mut accept, mut reject) = (fxszero, fxszero);
 
         let tl = (tl.0 as f32, tl.1 as f32);
         for i in 0_isize..3 {
@@ -289,22 +291,22 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
             let p_from = &points[(i - 2).rem_euclid(3) as usize];
             let p_to = &points[(i - 1).rem_euclid(3) as usize];
 
-            let e_tl = 0.5
-                * Self::cross_2d(
-                    [tl.0 - p_from.x(), tl.1 - p_from.y()],
-                    [p_to.x() - p_from.x(), p_to.y() - p_from.y()],
-                );
+            let (x0, y0) = (Fx28_4::from_float(p_from.x()), Fx28_4::from_float(p_from.y()));
+            let (x1, y1) = (Fx28_4::from_float(p_to.x()), Fx28_4::from_float(p_to.y()));
 
-            let e_dx = 0.5 * (p_to.y() - p_from.y());
-            let e_dy = 0.5 * (p_from.x() - p_to.x());
+            let dx = Fx28_4::from_float(0.5) * (y1 - y0);
+            let dy = Fx28_4::from_float(0.5) * (x0 - x1);
+            let e_tl =
+                (Fx28_4::from_float(tl.0) - x0) * dx + (Fx28_4::from_float(tl.1) - y0) * dy;
 
-            let e_deltas = [0.0, e_dx, e_dy, e_dx + e_dy];
-            accept[indx] = -e_deltas.iter().fold(f32::MAX, |a, b| a.min(*b));
-            reject[indx] = -e_deltas.iter().fold(f32::MIN, |a, b| a.max(*b));
+            accept[indx] -= if dx < fxzero { dx } else { fxzero };
+            reject[indx] -= if dx < fxzero { fxzero } else { dx };
+            accept[indx] -= if dy < fxzero { dy } else { fxzero };
+            reject[indx] -= if dy < fxzero { fxzero } else { dy };
 
             draw_tl[indx] = e_tl;
-            draw_dx[indx] = e_dx;
-            draw_dy[indx] = e_dy;
+            draw_dx[indx] = dx;
+            draw_dy[indx] = dy;
         }
 
         let recip_z: [[f32; 1]; 3] = std::array::from_fn(|i| [points[i].z()]);
@@ -312,12 +314,14 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
             pis.iter_mut().for_each(|x| *x *= rcp_z[0] - z_offset);
         }
 
+        let (f_draw_tl, f_draw_dx, f_draw_dy) =
+            (draw_tl.to_float(), draw_dx.to_float(), draw_dy.to_float());
         let (z_tl, z_dx, z_dy) =
-            interp_step(draw_tl, draw_dx, draw_dy, &recip_z, recip_tri_area);
+            interp_step(f_draw_tl, f_draw_dx, f_draw_dy, &recip_z, recip_tri_area);
         let (persp_tl, persp_dx, persp_dy) =
-            interp_step(draw_tl, draw_dx, draw_dy, &persp_interps, recip_tri_area);
+            interp_step(f_draw_tl, f_draw_dx, f_draw_dy, &persp_interps, recip_tri_area);
         let (affine_tl, affine_dx, affine_dy) =
-            interp_step(draw_tl, draw_dx, draw_dy, &affine_interps, recip_tri_area);
+            interp_step(f_draw_tl, f_draw_dx, f_draw_dy, &affine_interps, recip_tri_area);
 
         let dx = StepDelta { draw: draw_dx, z: z_dx[0], persp: persp_dx, affine: affine_dx };
         let dy = StepDelta { draw: draw_dy, z: z_dy[0], persp: persp_dy, affine: affine_dy };
@@ -407,21 +411,21 @@ impl Raster {
 }
 
 impl DrawCutoffs {
-    pub fn rejects(&self, draw_interps: f32x4) -> bool {
-        draw_interps.simd_lt(self.reject).any()
+    pub fn rejects(&self, draw_interps: Fx28_4x4) -> bool {
+        draw_interps.lt(self.reject).any()
     }
-    pub fn accepts(&self, draw_interps: f32x4) -> bool {
-        draw_interps.simd_ge(self.accept).all()
+    pub fn accepts(&self, draw_interps: Fx28_4x4) -> bool {
+        draw_interps.ge(self.accept).all()
     }
     pub fn scale(&mut self, fac: f32) {
-        self.accept *= f32x4::splat(fac);
-        self.reject *= f32x4::splat(fac);
+        self.accept *= Fx28_4x4::splat_float(fac);
+        self.reject *= Fx28_4x4::splat_float(fac);
     }
 }
 
 impl<const FIP: usize, const FIA: usize> StepDelta<FIP, FIA> {
     pub fn scale(&mut self, fac: f32) {
-        self.draw *= f32x4::splat(fac);
+        self.draw *= Fx28_4x4::splat_float(fac);
         self.z *= fac;
         self.persp.iter_mut().for_each(|x| *x *= fac);
         self.affine.iter_mut().for_each(|x| *x *= fac);
