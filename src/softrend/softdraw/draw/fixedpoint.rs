@@ -45,6 +45,9 @@ where
         let float_scale = Self::scale().cast::<f32>();
         unsafe { Self((input * float_scale).to_int_unchecked::<i32>()) }
     }
+    pub fn splat(input: Fx32<SCALE>) -> Self {
+        Self::from_array([input; N])
+    }
     pub fn splat_float(input: f32) -> Self {
         Self::from_array([Fx32::<SCALE>::from_float(input); N])
     }

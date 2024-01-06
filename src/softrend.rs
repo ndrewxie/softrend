@@ -107,8 +107,8 @@ impl Renderer {
             );
         }
 
-        //draw_setup_stress_test(self, time);
-        draw_near_clip_test(self, time);
+        draw_setup_stress_test(self, time);
+        //draw_near_clip_test(self, time);
         //draw_floor_test(self, time);
         self.raster.copy_to_brga_u32(buffer);
     }

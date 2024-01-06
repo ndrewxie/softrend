@@ -1,49 +1,13 @@
-use std::cell::{RefCell, RefMut};
-use std::simd::prelude::*;
-
-use super::Shader;
-use super::Vec4;
-
+mod config;
 mod fixedpoint;
+mod raster;
+mod steps;
+
+use super::*;
+use config::*;
 use fixedpoint::*;
-
-const TILE_SIZES: [usize; 2] = [4, 32];
-const N_TILE_SIZES: usize = TILE_SIZES.len() + 1; // 1x1 tiles
-
-pub struct Raster {
-    pixels: RefCell<&'static mut [u32]>,
-    z_buf: RefCell<&'static mut [f32]>,
-    fb_dims: (usize, usize),
-    screen_dims: (usize, usize),
-    raster_tl: (usize, usize),
-}
-
-#[derive(Clone, Debug)]
-pub struct StepDelta<const FIP: usize, const FIA: usize> {
-    draw: Fx28_4x4,
-    z: f32,
-    persp: [f32; FIP],
-    affine: [f32; FIA],
-}
-#[derive(Clone, Debug)]
-struct DrawCutoffs {
-    accept: Fx28_4x4,
-    reject: Fx28_4x4,
-}
-#[derive(Debug)]
-struct SetupData<const FIP: usize, const FIA: usize> {
-    draw_tl: Fx28_4x4,
-    interps: Interps<FIP, FIA>,
-    dx: StepDelta<FIP, FIA>,
-    dy: StepDelta<FIP, FIA>,
-    cutoffs: DrawCutoffs,
-}
-#[derive(Clone, Debug)]
-struct Interps<const FIP: usize, const FIA: usize> {
-    persp: [f32x4; FIP],
-    affine: [f32x4; FIA],
-    z: f32x4,
-}
+pub use raster::*;
+use steps::*;
 
 #[derive(Debug)]
 pub struct RasterAux<'a, S: Shader<FIP, FIA>, const FIP: usize, const FIA: usize> {
@@ -70,6 +34,7 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
         if area <= 0.0 {
             return;
         }
+        let area_usize = area.round() as usize;
 
         // Compute bounding box
         let ((mut min_x, mut min_y), (max_x, max_y)) =
@@ -82,7 +47,10 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
         // Compute starting tile index
         let start_tile = (0..TILE_SIZES.len())
             .rev()
-            .find(|&ti| 2 * TILE_SIZES[ti] <= bb_width && 2 * TILE_SIZES[ti] <= bb_height)
+            .find(|&ti| {
+                let size = TILE_SIZES[ti];
+                2 * size <= bb_width && 2 * size <= bb_height && 4 * area_usize <= size * size
+            })
             .unwrap_or(0);
         let start_tile_size = TILE_SIZES[start_tile];
         // Align start coordinates to tile size
@@ -118,20 +86,13 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
             }),
         };
 
-        aux.step_tile::<false>(
-            (min_x, min_y),
-            (max_x, max_y),
-            start_tile,
-            tri_data.draw_tl,
-            tri_data.interps,
-        );
+        aux.step_tile::<false>((min_x, min_y), (max_x, max_y), start_tile, tri_data.interps);
     }
     fn step_tile<const ACCEPTED: bool>(
         &self,
         tl: (usize, usize),
         br: (usize, usize),
         tsi: usize,
-        mut draw: Fx28_4x4,
         mut interps: Interps<FIP, FIA>,
     ) {
         let ts = TILE_SIZES[tsi];
@@ -142,20 +103,18 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
         while y < br.1 {
             let mut x = tl.0;
             let mut row_interps = interps.clone();
-            let mut row_draw = draw;
             while x < br.0 {
-                let accepts = ACCEPTED || cutoffs.accepts(row_draw);
-                let rejects = (!ACCEPTED) && cutoffs.rejects(row_draw);
+                let accepts = ACCEPTED || row_interps.accepts(&cutoffs);
+                let rejects = (!ACCEPTED) && row_interps.rejects(&cutoffs);
                 macro_rules! tile {
                     (INNER, $x:expr) => {
-                        self.fill_inner_tile::<$x>((x, y), row_draw, row_interps.clone())
+                        self.fill_inner_tile::<$x>((x, y), row_interps.clone())
                     };
                     (NEXT, $level:expr, $x:expr) => {
                         self.step_tile::<$x>(
                             (x, y),
                             (x + ts, y + ts),
                             $level,
-                            row_draw,
                             row_interps.clone(),
                         )
                     };
@@ -168,24 +127,21 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
                     (_, true, _) => tile!(NEXT, 0, true),
                     (_, false, _) => tile!(NEXT, tsi - 1, false),
                 }
-                row_interps.step_by(dx);
-                row_draw += dx.draw;
+                row_interps.step_by::<ACCEPTED>(dx);
                 x += ts;
             }
-            interps.step_by(dy);
-            draw += dy.draw;
+            interps.step_by::<ACCEPTED>(dy);
             y += ts;
         }
     }
     fn fill_inner_tile<const ACCEPTED: bool>(
         &self,
         tl: (usize, usize),
-        mut draw_interps: Fx28_4x4,
-        mut fill_interps: Interps<FIP, FIA>,
+        mut interps: Interps<FIP, FIA>,
     ) {
         let raster = self.raster;
         let width = raster.fb_dims().0;
-        let (dx, dy) = (&self.dx[0], &self.dy[0]);
+        let dy = &self.dy[0];
         let z_offset = self.shader.z_offset();
 
         let mut index = tl.1 * width + tl.0;
@@ -198,28 +154,19 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
             let pix_vec = u32x4::from_slice(pix_row);
             let z_buf_vec = f32x4::from_slice(z_buf_row);
 
-            let mut row_draw = draw_interps;
-
-            let persp = fill_interps.persp_div(z_offset);
-            let shaded = self.shader.frag(&persp, &fill_interps.affine);
+            let persp = interps.persp_correct(z_offset);
+            let shaded = self.shader.frag(&persp, &interps.affine);
             let blended = self.shader.blend(shaded, pix_vec);
 
-            let mut write_mask = fill_interps.z.simd_gt(z_buf_vec);
-            (!ACCEPTED).then(|| unsafe {
-                let mut draw_mask = mask32x4::splat(false);
-                let zero = Fx28_4x4::splat_float(0.0);
-                for i in 0..4 {
-                    draw_mask.set_unchecked(i, row_draw.ge(zero).all());
-                    row_draw += dx.draw;
-                }
-                write_mask &= draw_mask;
-            });
+            let mut write_mask = interps.rcp_z.simd_gt(z_buf_vec);
+            if !ACCEPTED {
+                write_mask &= interps.draw_mask();
+            }
 
-            write_mask.select(fill_interps.z, z_buf_vec).copy_to_slice(z_buf_row);
+            write_mask.select(interps.rcp_z, z_buf_vec).copy_to_slice(z_buf_row);
             write_mask.select(blended, pix_vec).copy_to_slice(pix_row);
 
-            (!ACCEPTED).then(|| draw_interps += dy.draw);
-            fill_interps.step_by(dy);
+            interps.step_by::<ACCEPTED>(dy);
             index += width;
         }
     }
@@ -323,152 +270,16 @@ impl<'a, S: Shader<FIP, FIA> + 'a, const FIP: usize, const FIA: usize>
         let (affine_tl, affine_dx, affine_dy) =
             interp_step(f_draw_tl, f_draw_dx, f_draw_dy, &affine_interps, recip_tri_area);
 
-        let dx = StepDelta { draw: draw_dx, z: z_dx[0], persp: persp_dx, affine: affine_dx };
-        let dy = StepDelta { draw: draw_dy, z: z_dy[0], persp: persp_dy, affine: affine_dy };
+        let dx =
+            StepDelta { edges: draw_dx, rcp_z: z_dx[0], persp: persp_dx, affine: affine_dx };
+        let dy =
+            StepDelta { edges: draw_dy, rcp_z: z_dy[0], persp: persp_dy, affine: affine_dy };
 
-        let interps = Interps::from(z_tl[0], persp_tl, affine_tl, &dx);
+        let interps = Interps::from(z_tl[0], persp_tl, affine_tl, draw_tl, &dx);
 
-        SetupData { draw_tl, interps, dx, dy, cutoffs: DrawCutoffs { accept, reject } }
+        SetupData { interps, dx, dy, cutoffs: DrawCutoffs { accept, reject } }
     }
     fn cross_2d(a: [f32; 2], b: [f32; 2]) -> f32 {
         a[0] * b[1] - b[0] * a[1]
-    }
-}
-
-impl Raster {
-    pub fn new(raster_tl: (usize, usize), screen_dims: (usize, usize)) -> Self {
-        #[repr(C, align(128))]
-        struct FbAlign([u32; 32]);
-        #[repr(C, align(128))]
-        struct ZAlign([f32; 32]);
-
-        let width_aligned = screen_dims.0.next_multiple_of(*TILE_SIZES.last().unwrap());
-        let height_aligned = screen_dims.1.next_multiple_of(*TILE_SIZES.last().unwrap());
-        let pixels =
-            Self::alloc_framebuffer::<FbAlign, u32>(width_aligned * height_aligned, 0);
-        let z_buf =
-            Self::alloc_framebuffer::<ZAlign, f32>(width_aligned * height_aligned, 0.0);
-        Self {
-            pixels: RefCell::from(pixels),
-            z_buf: RefCell::from(z_buf),
-            screen_dims,
-            fb_dims: (width_aligned, height_aligned),
-            raster_tl,
-        }
-    }
-    /// Allocates a slice, aligned to the alignment of `Align` and filled with `fill`.
-    /// Leaks memory, but as long as it isn't called repeatedly that's OK.
-    fn alloc_framebuffer<Align, T: Copy>(size: usize, fill: T) -> &'static mut [T] {
-        let fb = vec![fill; size + 4 * std::mem::size_of::<Align>()];
-        let fb_slice: &'static mut [T] = Vec::leak(fb);
-        unsafe {
-            let (_, aligned_fb, _) = fb_slice.align_to_mut::<Align>();
-            std::slice::from_raw_parts_mut(aligned_fb.as_mut_ptr() as *mut T, size)
-        }
-    }
-    pub fn win_dims(&self) -> (usize, usize) {
-        self.screen_dims
-    }
-    pub fn fb_dims(&self) -> (usize, usize) {
-        self.fb_dims
-    }
-    pub fn tl(&self) -> (usize, usize) {
-        self.raster_tl
-    }
-    pub fn pixels(&self) -> RefMut<&'static mut [u32]> {
-        self.pixels.borrow_mut()
-    }
-    pub fn z_buf(&self) -> RefMut<&'static mut [f32]> {
-        self.z_buf.borrow_mut()
-    }
-    pub fn clear(&self) {
-        self.pixels().fill(0);
-        self.z_buf().fill(0.0);
-    }
-    pub fn copy_to_brga_u32<B>(&self, buffer: &mut B)
-    where
-        B: std::ops::DerefMut<Target = [u32]>,
-    {
-        let pixels = self.pixels();
-        let pixels = unsafe {
-            let pix_ptr = pixels.as_ptr() as *mut u8;
-            let pix_len = pixels.len() * 4;
-            std::slice::from_raw_parts(pix_ptr, pix_len)
-        };
-
-        for (in_row, out_row) in pixels
-            .chunks_exact(4 * self.fb_dims().0)
-            .zip(buffer.chunks_exact_mut(self.win_dims().0))
-        {
-            for (in_pix, out_pix) in in_row.chunks_exact(4).zip(out_row.iter_mut()) {
-                let red = in_pix[0] as u32;
-                let green = in_pix[1] as u32;
-                let blue = in_pix[2] as u32;
-                *out_pix = blue | (green << 8) | (red << 16);
-            }
-        }
-    }
-}
-
-impl DrawCutoffs {
-    pub fn rejects(&self, draw_interps: Fx28_4x4) -> bool {
-        draw_interps.lt(self.reject).any()
-    }
-    pub fn accepts(&self, draw_interps: Fx28_4x4) -> bool {
-        draw_interps.ge(self.accept).all()
-    }
-    pub fn scale(&mut self, fac: f32) {
-        self.accept *= Fx28_4x4::splat_float(fac);
-        self.reject *= Fx28_4x4::splat_float(fac);
-    }
-}
-
-impl<const FIP: usize, const FIA: usize> StepDelta<FIP, FIA> {
-    pub fn scale(&mut self, fac: f32) {
-        self.draw *= Fx28_4x4::splat_float(fac);
-        self.z *= fac;
-        self.persp.iter_mut().for_each(|x| *x *= fac);
-        self.affine.iter_mut().for_each(|x| *x *= fac);
-    }
-}
-
-impl<const FIP: usize, const FIA: usize> Interps<FIP, FIA> {
-    pub fn from(
-        z: f32,
-        persp: [f32; FIP],
-        affine: [f32; FIA],
-        dx: &StepDelta<FIP, FIA>,
-    ) -> Self {
-        let step = f32x4::from_array([0.0, 1.0, 2.0, 3.0]);
-        Self {
-            z: f32x4::splat(z) + step * f32x4::splat(dx.z),
-            persp: std::array::from_fn(|i| {
-                f32x4::splat(persp[i]) + step * f32x4::splat(dx.persp[i])
-            }),
-            affine: std::array::from_fn(|i| {
-                f32x4::splat(affine[i]) + step * f32x4::splat(dx.affine[i])
-            }),
-        }
-    }
-    pub fn step_by(&mut self, delta: &StepDelta<FIP, FIA>) {
-        self.z += f32x4::splat(delta.z);
-        for (persp, dpersp) in self.persp.iter_mut().zip(delta.persp) {
-            *persp += f32x4::splat(dpersp);
-        }
-        for (affine, daffine) in self.affine.iter_mut().zip(delta.affine) {
-            *affine += f32x4::splat(daffine);
-        }
-    }
-    pub fn persp_div(&self, z_offset: f32) -> [f32x4; FIP] {
-        let z = (self.z - f32x4::splat(z_offset)).recip();
-        let mut persp = self.persp;
-        persp.iter_mut().for_each(|x| *x *= z);
-        persp
-    }
-}
-
-impl std::fmt::Debug for Raster {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Raster")
     }
 }
